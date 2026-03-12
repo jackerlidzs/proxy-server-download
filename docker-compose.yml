@@ -1,0 +1,35 @@
+services:
+  app:
+    build: ./app
+    container_name: dl-proxy-app
+    restart: unless-stopped
+    environment:
+      - DOWNLOAD_DIR=/downloads
+      - API_KEY=${API_KEY:-changeme}
+      - MAX_CONNECTIONS=${MAX_CONNECTIONS:-16}
+      - CLEANUP_HOURS=${CLEANUP_HOURS:-48}
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
+      - SERVER_URL=${SERVER_URL:-http://localhost}
+    volumes:
+      - downloads:/downloads
+    networks:
+      - proxy-net
+
+  nginx:
+    build: ./nginx
+    container_name: dl-proxy-nginx
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:80"
+    volumes:
+      - downloads:/downloads:ro
+    depends_on:
+      - app
+    networks:
+      - proxy-net
+
+volumes:
+  downloads:
+
+networks:
+  proxy-net:
