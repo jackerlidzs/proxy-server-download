@@ -17,7 +17,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 # Configuration
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/downloads"))
@@ -236,6 +240,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve Web UI
+@app.get("/", include_in_schema=False)
+async def serve_ui():
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.post("/api/download", response_model=DownloadStatus)
