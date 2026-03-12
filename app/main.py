@@ -140,26 +140,32 @@ async def cleanup_old_files():
 async def run_download(task_id: str, url: str, headers: dict, filename: str, connections: int):
     """Download file using aria2c."""
     async with download_semaphore:
+        # Clean filename of any problematic characters
+        filename = filename.strip().rstrip("^").strip()
         filepath = DOWNLOAD_DIR / filename
+        log_file = DOWNLOAD_DIR / f".{task_id}.log"
         downloads[task_id]["status"] = "downloading"
+        downloads[task_id]["filename"] = filename
 
         # Build aria2c command
         cmd = [
             "aria2c",
-            "-x", str(connections),       # max-connection-per-server
-            "-s", str(connections),       # split
-            "-k", "1M",                  # min-split-size
-            "-m", "5",                   # max-tries
+            "-x", str(connections),
+            "-s", str(connections),
+            "-k", "1M",
+            "-m", "5",
             "--retry-wait=3",
-            "-t", "60",                  # timeout
+            "-t", "60",
             "--connect-timeout=30",
-            "-c",                        # continue (flag, no value!)
+            "-c",
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
-            "-d", str(DOWNLOAD_DIR),     # dir
-            "-o", filename,              # out
-            "--console-log-level=notice",
-            "--summary-interval=5",
+            "-d", str(DOWNLOAD_DIR),
+            "-o", filename,
+            "-l", str(log_file),
+            "--log-level=info",
+            "--console-log-level=info",
+            "--summary-interval=3",
             "--file-allocation=none",
         ]
 
@@ -167,12 +173,12 @@ async def run_download(task_id: str, url: str, headers: dict, filename: str, con
         for key, val in headers.items():
             cmd.extend(["--header", f"{key}: {val}"])
 
-        # Add URL after -- separator to prevent misinterpretation
-        cmd.append("--")
+        # URL must be the last argument
         cmd.append(url)
 
-        # Log the command for debugging
-        print(f"[Download {task_id}] Running: {' '.join(cmd[:10])}... (URL: {url[:80]})")
+        # Log full command for debugging
+        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        print(f"[Download {task_id}] CMD: {cmd_str}")
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -181,14 +187,16 @@ async def run_download(task_id: str, url: str, headers: dict, filename: str, con
                 stderr=asyncio.subprocess.STDOUT,
             )
 
-            last_line = ""
+            # Capture ALL output lines for error reporting
+            output_lines = []
             while True:
                 line = await process.stdout.readline()
                 if not line:
                     break
                 decoded = line.decode("utf-8", errors="ignore").strip()
                 if decoded:
-                    last_line = decoded
+                    output_lines.append(decoded)
+                    print(f"[Download {task_id}] {decoded}")
                     # Parse progress from aria2c output
                     if "%" in decoded or "DL:" in decoded:
                         downloads[task_id]["progress"] = decoded
@@ -204,10 +212,29 @@ async def run_download(task_id: str, url: str, headers: dict, filename: str, con
                     "completed_at": datetime.now().isoformat(),
                     "progress": "100%",
                 })
+                # Clean up log file on success
+                if log_file.exists():
+                    log_file.unlink()
             else:
+                # Get the most useful error lines (skip empty/generic ones)
+                error_lines = [l for l in output_lines if l and "see the log" not in l.lower()]
+                error_detail = " | ".join(error_lines[-5:]) if error_lines else "Unknown error"
+
+                # Also try to read log file for more details
+                log_content = ""
+                if log_file.exists():
+                    try:
+                        log_text = log_file.read_text(errors="ignore")
+                        # Find ERROR lines in log
+                        log_errors = [l.strip() for l in log_text.split("\n") if "ERR" in l or "error" in l.lower()]
+                        if log_errors:
+                            log_content = " | LOG: " + " | ".join(log_errors[-3:])
+                    except Exception:
+                        pass
+
                 downloads[task_id].update({
                     "status": "failed",
-                    "error": f"aria2c exit code: {process.returncode}. {last_line}",
+                    "error": f"exit={process.returncode}. {error_detail}{log_content}",
                 })
 
         except Exception as e:
