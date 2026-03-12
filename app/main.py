@@ -5,21 +5,17 @@ Downloads files using aria2c and serves them via Nginx
 
 import os
 import uuid
-import json
-import time
 import shlex
 import asyncio
-import hashlib
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 STATIC_DIR = Path(__file__).parent / "static"
 
