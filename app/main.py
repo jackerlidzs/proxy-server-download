@@ -146,18 +146,18 @@ async def run_download(task_id: str, url: str, headers: dict, filename: str, con
         # Build aria2c command
         cmd = [
             "aria2c",
-            "--max-connection-per-server", str(connections),
-            "--split", str(connections),
-            "--min-split-size=1M",
-            "--max-tries=5",
+            "-x", str(connections),       # max-connection-per-server
+            "-s", str(connections),       # split
+            "-k", "1M",                  # min-split-size
+            "-m", "5",                   # max-tries
             "--retry-wait=3",
-            "--timeout=60",
+            "-t", "60",                  # timeout
             "--connect-timeout=30",
-            "--continue=true",
+            "-c",                        # continue (flag, no value!)
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
-            "--dir", str(DOWNLOAD_DIR),
-            "--out", filename,
+            "-d", str(DOWNLOAD_DIR),     # dir
+            "-o", filename,              # out
             "--console-log-level=notice",
             "--summary-interval=5",
             "--file-allocation=none",
@@ -167,7 +167,12 @@ async def run_download(task_id: str, url: str, headers: dict, filename: str, con
         for key, val in headers.items():
             cmd.extend(["--header", f"{key}: {val}"])
 
+        # Add URL after -- separator to prevent misinterpretation
+        cmd.append("--")
         cmd.append(url)
+
+        # Log the command for debugging
+        print(f"[Download {task_id}] Running: {' '.join(cmd[:10])}... (URL: {url[:80]})")
 
         try:
             process = await asyncio.create_subprocess_exec(
