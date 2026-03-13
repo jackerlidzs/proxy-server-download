@@ -140,7 +140,7 @@
 <div class="card">
 <div class="card-h">📥 New Download</div>
 <div class="card-b">
-<div class="tabs"><button class="tab active" onclick="stab('url',this)">URL</button><button class="tab" onclick="stab('curl',this)">cURL</button></div>
+<div class="tabs"><button class="tab active" onclick="stab('url',this)">URL</button><button class="tab" onclick="stab('curl',this)">cURL</button><button class="tab" onclick="stab('batch',this)">📦 Batch</button></div>
 <div id="tab-url" class="tc active">
 <div class="fg"><label class="fl">URL</label><input type="text" id="dlUrl" class="fi" placeholder="https://example.com/file.zip"></div>
 <div class="fg"><label class="fl">Headers (JSON)</label><textarea id="dlH" class="fa" style="min-height:60px" placeholder='{"referer":"..."}'></textarea></div>
@@ -151,6 +151,18 @@
 <div class="fg"><label class="fl">cURL Command</label><textarea id="dlCurl" class="fa" style="min-height:100px" placeholder="curl 'https://...'"></textarea><div class="fh">Chrome → Network → Copy as cURL</div></div>
 <div class="fr"><div class="fg"><label class="fl">Filename</label><input type="text" id="dlCFn" class="fi" placeholder="Auto"></div><div class="fg"><label class="fl">Engine</label><select id="dlCE" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div></div>
 <button class="btn btn-p" onclick="subCurl()" id="bCurl">⬇ Download</button>
+</div>
+<div id="tab-batch" class="tc">
+<div class="fg"><label class="fl">Multiple Links / cURL Commands</label><textarea id="dlBatch" class="fa" style="min-height:180px;font-family:monospace;font-size:11px" placeholder="Paste URLs or curl commands (one per line). Supports mixed input:
+
+https://example.com/file1.zip
+https://example.com/file2.zip
+curl 'https://example.com/file3.rar' \
+  -H 'referer: https://...'
+curl 'https://example.com/file4.rar' \
+  -H 'referer: https://...'"></textarea><div class="fh">Supports plain URLs + curl commands — each will start as a separate download</div></div>
+<div class="fr"><div class="fg"><label class="fl">Engine</label><select id="dlBE" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div><div class="fg" style="flex:2"><div id="batchInfo" style="font-size:12px;color:var(--txt3);line-height:28px"></div></div></div>
+<button class="btn btn-p" onclick="subBatch()" id="bBatch" style="width:100%">📦 Download All</button>
 </div>
 </div></div>
 <div class="card">

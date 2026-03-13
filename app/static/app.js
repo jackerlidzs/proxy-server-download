@@ -133,6 +133,58 @@ async function subCurl(){
   try{const d=await api('POST','/api/download',{url:'p',curl_command:cmd,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlCurl').value='';rAll()}
   catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
 }
+function splitBatchInput(text){
+  // Join backslash-continued lines
+  const joined=text.replace(/\\\s*\n/g,' ');
+  const items=[];
+  // Split into lines
+  const lines=joined.split('\n').map(s=>s.trim()).filter(Boolean);
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i];
+    if(/^curl\s/i.test(line)){
+      // Collect entire curl command (may span until next 'curl ' or plain URL)
+      let cmd=line;
+      i++;
+      while(i<lines.length && !/^curl\s/i.test(lines[i]) && !/^https?:\/\//i.test(lines[i])){
+        cmd+=' '+lines[i]; i++;
+      }
+      items.push({type:'curl',value:cmd.trim()});
+    } else if(/^https?:\/\//i.test(line)){
+      items.push({type:'url',value:line});
+      i++;
+    } else { i++; }
+  }
+  return items;
+}
+async function subBatch(){
+  const raw=document.getElementById('dlBatch').value.trim();
+  if(!raw){toast('Paste links or curl commands','err');return}
+  const items=splitBatchInput(raw);
+  if(!items.length){toast('No URLs or curl commands detected','err');return}
+  const eng=document.getElementById('dlBE').value;
+  const b=document.getElementById('bBatch');
+  const info=document.getElementById('batchInfo');
+  b.disabled=true;
+  let ok=0,fail=0;
+  info.innerHTML=`⏳ Submitting 0/${items.length}...`;
+  for(let i=0;i<items.length;i++){
+    info.innerHTML=`⏳ Submitting ${i+1}/${items.length}...`;
+    try{
+      const body=items[i].type==='curl'
+        ? {url:'p',curl_command:items[i].value,engine:eng}
+        : {url:items[i].value,engine:eng};
+      await api('POST','/api/download',body);
+      ok++;
+    }catch(e){fail++;console.error('Batch item failed:',e)}
+  }
+  b.disabled=false;
+  const msg=`✅ ${ok} started` + (fail?`, ❌ ${fail} failed`:'');
+  info.innerHTML=msg;
+  toast(msg,'ok');
+  document.getElementById('dlBatch').value='';
+  rAll();
+}
 
 async function rAll(){
   try{const d=await api('GET','/api/downloads');renderDL(d.downloads||[])}catch{}
