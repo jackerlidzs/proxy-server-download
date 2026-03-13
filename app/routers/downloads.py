@@ -34,6 +34,7 @@ async def create_download(req: DownloadRequest, _=Depends(verify_key)):
         "task_id": tid, "status": "queued", "filename": fn, "url": url,
         "engine": req.engine or "auto", "percent": 0, "speed": "",
         "downloaded": 0, "total_size": 0,
+        "_headers": headers,
         "created_at": datetime.now().isoformat()
     }
     asyncio.create_task(run_download(
@@ -77,8 +78,8 @@ async def resume_download(tid: str, _=Depends(verify_key)):
         raise HTTPException(400, "No URL to resume")
     # Reset status
     d.update({"status": "queued", "percent": 0, "speed": "", "error": ""})
-    # Re-parse headers if we had curl_command (headers stored in original request)
-    headers = {}
+    # Re-use stored headers from original request
+    headers = d.get("_headers", {})
     engine = d.get("engine", "auto")
     fn = d.get("filename", "")
     asyncio.create_task(run_download(

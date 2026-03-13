@@ -840,3 +840,59 @@ async function savePreview(){
     document.addEventListener('mouseup',onUp);
   });
 })();
+
+// === Keyboard Shortcuts ===
+document.addEventListener('keydown', e => {
+  // Skip if typing in input/textarea or modal open
+  if(e.target.matches('input,textarea,select')) return;
+  if(document.querySelector('.modal-bg[style*="flex"]')) return;
+  const tab = document.getElementById('fileManager');
+  if(!tab || tab.style.display === 'none') return;
+
+  // Ctrl+A — Select All files
+  if(e.ctrlKey && e.key === 'a') {
+    e.preventDefault();
+    fmSelected.clear();
+    document.querySelectorAll('.fm-item,.fm-row:not(.fm-row-h)').forEach(el => {
+      const p = el.dataset.path; if(!p) return;
+      fmSelected.add(p); el.classList.add('selected');
+    });
+    const cnt = fmSelected.size;
+    document.getElementById('fmBulkDel').style.display = cnt ? 'inline-flex' : 'none';
+    document.getElementById('fmBulkCompress').style.display = cnt ? 'inline-flex' : 'none';
+    document.getElementById('fmSelInfo').style.display = cnt ? 'inline-flex' : 'none';
+    document.getElementById('fmBulkDiv').style.display = cnt ? 'block' : 'none';
+    document.getElementById('fmSelCount').textContent = cnt;
+  }
+
+  // Delete — Delete selected files
+  if(e.key === 'Delete' && fmSelected.size > 0) {
+    e.preventDefault();
+    fmBulkDel();
+  }
+
+  // Escape — Clear selection
+  if(e.key === 'Escape') {
+    fmSelected.clear();
+    document.querySelectorAll('.fm-item.selected,.fm-row.selected').forEach(el => el.classList.remove('selected'));
+    document.getElementById('fmBulkDel').style.display = 'none';
+    document.getElementById('fmBulkCompress').style.display = 'none';
+    document.getElementById('fmSelInfo').style.display = 'none';
+    document.getElementById('fmBulkDiv').style.display = 'none';
+  }
+
+  // Enter — Open selected file (single selection only)
+  if(e.key === 'Enter' && fmSelected.size === 1) {
+    e.preventDefault();
+    const path = [...fmSelected][0];
+    openPreview(path);
+  }
+
+  // F2 — Rename selected file (single selection only)
+  if(e.key === 'F2' && fmSelected.size === 1) {
+    e.preventDefault();
+    const path = [...fmSelected][0];
+    fmCtxFile = path;
+    ctxAction('rename');
+  }
+});

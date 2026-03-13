@@ -11,6 +11,7 @@ from models import (
     CompressRequest, ExtractRequest, TagsRequest, DescriptionRequest, MoveRequest
 )
 from config import DOWNLOAD_DIR, SERVER_URL
+from utils import safe_path
 from services.file_service import (
     list_dir_items, human_size, get_file_info, update_tags, update_description,
     soft_delete, list_trash, restore_from_trash, purge_trash,
@@ -48,7 +49,7 @@ async def file_info(filepath: str, _=Depends(verify_key)):
 # --- File Operations ---
 @router.post("/files/rename/{filename:path}")
 async def rename_file(filename: str, req: RenameRequest, _=Depends(verify_key)):
-    fp = DOWNLOAD_DIR / filename
+    fp = safe_path(filename)
     if not fp.exists():
         raise HTTPException(404)
     new = sanitize(req.new_name)
@@ -62,12 +63,10 @@ async def rename_file(filename: str, req: RenameRequest, _=Depends(verify_key)):
 
 @router.post("/files/move/{filename:path}")
 async def move_file(filename: str, req: MoveRequest, _=Depends(verify_key)):
-    fp = DOWNLOAD_DIR / filename
+    fp = safe_path(filename)
     if not fp.exists():
         raise HTTPException(404)
-    dest = DOWNLOAD_DIR / req.destination
-    if not str(dest.resolve()).startswith(str(DOWNLOAD_DIR.resolve())):
-        raise HTTPException(403, "Access denied")
+    dest = safe_path(req.destination)
     dest.mkdir(parents=True, exist_ok=True)
     new_path = dest / fp.name
     shutil.move(str(fp), str(new_path))
@@ -86,7 +85,7 @@ async def create_folder(req: CreateFolderRequest, path: str = "", _=Depends(veri
 @router.delete("/files/{filename:path}")
 async def delete_file(filename: str, permanent: bool = False, _=Depends(verify_key)):
     """Soft delete (to recycle bin) by default. Use permanent=true to skip."""
-    fp = DOWNLOAD_DIR / filename
+    fp = safe_path(filename)
     if not fp.exists():
         raise HTTPException(404)
 
@@ -107,8 +106,9 @@ async def delete_file(filename: str, permanent: bool = False, _=Depends(verify_k
 async def bulk_delete(req: BulkDeleteRequest, permanent: bool = False, _=Depends(verify_key)):
     deleted = []
     for fn in req.filenames:
-        fp = DOWNLOAD_DIR / fn
-        if not str(fp.resolve()).startswith(str(DOWNLOAD_DIR.resolve())):
+        try:
+            fp = safe_path(fn)
+        except HTTPException:
             continue
         if not fp.exists():
             continue
@@ -205,7 +205,7 @@ async def do_restore_version(filepath: str, version: int, _=Depends(verify_key))
 # --- Extract & Compress ---
 @router.post("/extract/{filename:path}")
 async def extract_file(filename: str, request: Request, _=Depends(verify_key)):
-    fp = DOWNLOAD_DIR / filename
+    fp = safe_path(filename)
     if not fp.exists():
         raise HTTPException(404, "File not found")
 

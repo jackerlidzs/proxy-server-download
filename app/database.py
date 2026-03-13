@@ -17,6 +17,7 @@ async def get_db() -> aiosqlite.Connection:
         await _db.execute("PRAGMA journal_mode=WAL")
         await _db.execute("PRAGMA synchronous=NORMAL")
         await _db.execute("PRAGMA cache_size=-8000")  # 8MB cache
+        await _db.execute("PRAGMA busy_timeout=5000")  # Wait up to 5s if locked
         await migrate(_db)
     return _db
 

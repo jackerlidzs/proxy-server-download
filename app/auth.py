@@ -2,7 +2,7 @@
 Authentication - supports both API key and JWT, with role enforcement
 """
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, Header, Depends
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -20,7 +20,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_token(username: str, role: str) -> str:
-    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
     return jwt.encode({"sub": username, "role": role, "exp": expire}, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
