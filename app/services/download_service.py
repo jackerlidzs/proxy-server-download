@@ -179,12 +179,16 @@ async def dl_curl(tid, url, headers, filename, resume=False):
             sz = fp.stat().st_size
             # Check if we got an HTML page instead of the actual file
             is_html = False
+            cf_blocked = False
             if sz < 100_000:  # Check files under 100KB for HTML content
                 try:
                     c = fp.read_text(errors="ignore")[:2000]
                     cl = c.lower()
                     if any(tag in cl for tag in ["<html", "<!doctype", "<head>", "<body", "403 forbidden", "404 not found", "access denied"]):
                         is_html = True
+                    # Detect Cloudflare challenge
+                    if any(cf in cl for cf in ["cloudflare", "cf-browser-verification", "challenge-platform", "just a moment", "security check"]):
+                        cf_blocked = True
                 except:
                     pass
             # Also check if content-type from HEAD was text/html
@@ -192,7 +196,9 @@ async def dl_curl(tid, url, headers, filename, resume=False):
                 is_html = True
             if is_html:
                 fp.unlink(missing_ok=True)
-                return False, f"Got HTML page instead of file ({human_size(sz)}). The URL may require a browser to download. Try copying the direct download link."
+                if cf_blocked:
+                    return False, f"Cloudflare protected ({human_size(sz)}). Open URL in browser → F12 → Network → right-click request → Copy as cURL → paste in cURL tab."
+                return False, f"Got HTML page instead of file ({human_size(sz)}). Open URL in browser → F12 → Network → right-click request → Copy as cURL."
             downloads[tid].update({
                 "status": "completed", "file_size": sz, "downloaded": sz, "percent": 100.0,
                 "download_url": f"{SERVER_URL}/files/{filename}",
