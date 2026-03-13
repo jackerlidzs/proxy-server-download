@@ -204,13 +204,19 @@ async def do_restore_version(filepath: str, version: int, _=Depends(verify_key))
 
 # --- Extract & Compress ---
 @router.post("/extract/{filename:path}")
-async def extract_file(filename: str, req: ExtractRequest = None, _=Depends(verify_key)):
+async def extract_file(filename: str, request: Request, _=Depends(verify_key)):
     fp = DOWNLOAD_DIR / filename
     if not fp.exists():
         raise HTTPException(404, "File not found")
 
-    delete_after = req.delete_after if req else False
-    result = await extract_archive(filename, downloads, delete_after=delete_after)
+    delete_after = False
+    try:
+        body = await request.json()
+        delete_after = body.get("delete_after", False)
+    except Exception:
+        pass
+
+    result = await extract_archive(filename, delete_after=delete_after)
 
     if not result["success"]:
         if "missing_files" in result:
@@ -222,7 +228,22 @@ async def extract_file(filename: str, req: ExtractRequest = None, _=Depends(veri
             })
         raise HTTPException(400, result.get("error", "Extraction failed"))
 
-    return {"message": f"Extraction started for {filename}", "task_id": result.get("task_id")}
+    return result
+
+
+@router.get("/extract-tasks")
+async def get_extract_tasks(_=Depends(verify_key)):
+    """Get extract task progress (separate from downloads)."""
+    from services.extract_service import extract_tasks
+    tasks = list(extract_tasks.values())
+    # Clean up completed tasks older than 5 minutes
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+    to_remove = [k for k, v in extract_tasks.items()
+                 if v.get("status") in ("completed", "failed") and v.get("created_at", "") < cutoff]
+    for k in to_remove:
+        extract_tasks.pop(k, None)
+    return {"tasks": tasks}
 
 
 @router.post("/extract/check/{filename:path}")

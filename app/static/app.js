@@ -284,9 +284,38 @@ async function delF(path){
 
 // Extract
 async function extractF(path){
-  const del=confirm('Delete archive files after extraction?');
-  try{const r=await api('POST','/api/extract/'+encodeURIComponent(path),{delete_after:del});toast(r.message||'Extraction started','ok');rAll()}
-  catch(e){toast(e.message,'err')}
+  // For multi-part RAR: check parts first, then only extract part1
+  const name=path.split('/').pop().toLowerCase();
+  const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
+  if(partMatch){
+    // Multi-part RAR: always extract via part1
+    const group=partMatch[1];
+    const partNum=parseInt(partMatch[2]);
+    const dir=path.substring(0,path.length-name.length);
+    const part1Path=dir+group+'.part1.rar';
+    // Check parts completeness first
+    try{
+      const check=await api('POST','/api/extract/check/'+encodeURIComponent(path));
+      if(check.is_multipart && !check.complete){
+        toast(`Missing parts: ${check.missing_files.join(', ')}`,'err');
+        return;
+      }
+    }catch(e){}
+    // Only extract part1
+    if(partNum!==1){
+      toast('Redirecting to part1 for extraction...','info');
+    }
+    const del=confirm('Delete archive files after extraction?');
+    try{
+      const r=await api('POST','/api/extract/'+encodeURIComponent(part1Path),{delete_after:del});
+      toast(r.message||'Extraction started','ok');rFiles();
+    }catch(e){toast(e.message,'err')}
+  }else{
+    // Single archive file
+    const del=confirm('Delete archive files after extraction?');
+    try{const r=await api('POST','/api/extract/'+encodeURIComponent(path),{delete_after:del});toast(r.message||'Extraction started','ok');rFiles();}
+    catch(e){toast(e.message,'err')}
+  }
 }
 
 // Detail Panel

@@ -13,6 +13,9 @@ from config import DOWNLOAD_DIR, MAX_CONCURRENT_EXTRACT
 extract_semaphore: asyncio.Semaphore = None
 RAR_PATTERN = re.compile(r'^(.+?)\.part(\d+)\.rar$', re.IGNORECASE)
 
+# Separate tracker for extract tasks (not in downloads)
+extract_tasks: dict = {}
+
 
 def init_extract_semaphore():
     global extract_semaphore
@@ -56,9 +59,9 @@ def check_parts(filename: str, directory: Path) -> dict:
     }
 
 
-async def extract_archive(filename: str, downloads_dict: dict, delete_after: bool = False,
+async def extract_archive(filename: str, delete_after: bool = False,
                            base_dir: Path = None) -> dict:
-    """Extract an archive file. Returns extraction status."""
+    """Extract an archive file. Runs in background, returns task_id."""
     base_dir = base_dir or DOWNLOAD_DIR
     fp = base_dir / filename
 
@@ -91,38 +94,44 @@ async def extract_archive(filename: str, downloads_dict: dict, delete_after: boo
                     fp = part1
                     filename = str(part1.relative_to(base_dir))
 
-    downloads_dict[eid] = {
+    extract_tasks[eid] = {
         "task_id": eid, "status": "extracting", "filename": fp.name,
         "group": group, "progress": "Starting...", "percent": 0,
         "created_at": datetime.now().isoformat()
     }
 
+    # Run extraction in background
+    asyncio.create_task(_run_extract(fp, ext, name_lower, base_dir, eid, group, delete_after))
+
+    return {"success": True, "task_id": eid, "message": f"Extraction started for {fp.name}"}
+
+
+async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
+                       eid: str, group: str, delete_after: bool):
+    """Background extraction task."""
     async with extract_semaphore:
         try:
             if ext == ".rar" or name_lower.endswith(".rar"):
-                result = await _extract_rar(fp, base_dir, eid, downloads_dict)
+                result = await _extract_rar(fp, base_dir, eid, extract_tasks)
             elif ext == ".zip":
-                result = await _extract_zip(fp, base_dir, eid, downloads_dict)
+                result = await _extract_zip(fp, base_dir, eid, extract_tasks)
             elif ext == ".7z":
-                result = await _extract_7z(fp, base_dir, eid, downloads_dict)
+                result = await _extract_7z(fp, base_dir, eid, extract_tasks)
             elif name_lower.endswith((".tar.gz", ".tgz")):
-                result = await _extract_tar(fp, base_dir, eid, downloads_dict)
+                result = await _extract_tar(fp, base_dir, eid, extract_tasks)
             elif ext == ".tar":
-                result = await _extract_tar(fp, base_dir, eid, downloads_dict)
+                result = await _extract_tar(fp, base_dir, eid, extract_tasks)
             elif ext == ".gz":
-                result = await _extract_tar(fp, base_dir, eid, downloads_dict)
+                result = await _extract_tar(fp, base_dir, eid, extract_tasks)
             else:
-                downloads_dict[eid].update({"status": "failed", "error": f"Unsupported format: {ext}"})
-                return {"success": False, "error": f"Unsupported format: {ext}", "task_id": eid}
+                extract_tasks[eid].update({"status": "failed", "error": f"Unsupported format: {ext}"})
+                return
 
             if result and delete_after:
                 await _cleanup_archives(fp, group, base_dir)
 
-            return {"success": result, "task_id": eid}
-
         except Exception as e:
-            downloads_dict[eid].update({"status": "failed", "error": str(e)})
-            return {"success": False, "error": str(e), "task_id": eid}
+            extract_tasks[eid].update({"status": "failed", "error": str(e)})
 
 
 async def _extract_rar(fp: Path, out_dir: Path, eid: str, downloads_dict: dict) -> bool:
