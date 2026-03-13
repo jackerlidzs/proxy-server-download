@@ -3,38 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Download Proxy</title>
+    <title>Download Proxy + Media Server</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #09090b;
             --bg-card: #18181b;
-            --bg-elevated: #27272a;
+            --bg-raised: #1e1e22;
             --bg-input: #1c1c1f;
-            --border: #2e2e33;
-            --border-hover: #3f3f46;
+            --border: #2a2a2e;
+            --border-h: #3f3f46;
             --text: #fafafa;
-            --text-secondary: #a1a1aa;
-            --text-muted: #71717a;
+            --text-2: #a1a1aa;
+            --text-3: #71717a;
             --accent: #6366f1;
-            --accent-light: #818cf8;
-            --accent-glow: rgba(99, 102, 241, 0.12);
-            --success: #22c55e;
-            --success-bg: rgba(34, 197, 94, 0.08);
-            --warning: #eab308;
-            --warning-bg: rgba(234, 179, 8, 0.08);
-            --danger: #ef4444;
-            --danger-bg: rgba(239, 68, 68, 0.08);
+            --accent-l: #818cf8;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
             --cyan: #06b6d4;
             --purple: #a855f7;
             --r: 10px;
-            --r-sm: 6px;
+            --rs: 6px;
         }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         body {
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            font-family: 'Inter', system-ui, sans-serif;
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
@@ -42,1042 +36,565 @@
         }
 
         /* Header */
-        .header {
-            background: rgba(9, 9, 11, 0.85);
-            backdrop-filter: blur(16px) saturate(180%);
+        .hdr {
+            background: rgba(9,9,11,0.85);
+            backdrop-filter: blur(16px);
             border-bottom: 1px solid var(--border);
             padding: 0 24px;
-            height: 56px;
+            height: 52px;
             display: flex;
             align-items: center;
             position: sticky;
             top: 0;
             z-index: 100;
         }
+        .hdr-inner { max-width: 1200px; width: 100%; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
+        .logo { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; }
+        .logo-mark { width: 26px; height: 26px; background: linear-gradient(135deg, var(--accent), var(--purple)); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+        .hdr-r { display: flex; align-items: center; gap: 8px; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: blink 2s infinite; }
+        .dot.off { background: var(--red); animation: none; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .badge { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; background: var(--bg-raised); border: 1px solid var(--border); color: var(--text-2); }
+        .btn-i { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: var(--rs); background: transparent; color: var(--text-3); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; transition: .15s; }
+        .btn-i:hover { border-color: var(--border-h); color: var(--text); }
 
-        .header-inner {
-            max-width: 1120px;
-            width: 100%;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 15px;
-            font-weight: 700;
-            color: var(--text);
-        }
-
-        .logo-mark {
-            width: 28px;
-            height: 28px;
-            background: linear-gradient(135deg, var(--accent), var(--purple));
-            border-radius: 7px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-        }
-
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: var(--success);
-            animation: blink 2s infinite;
-        }
-
-        .status-dot.off { background: var(--danger); animation: none; }
-
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-
-        .badge {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 500;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            color: var(--text-secondary);
-        }
-
-        .btn-icon {
-            width: 32px;
-            height: 32px;
-            border: 1px solid var(--border);
-            border-radius: var(--r-sm);
-            background: transparent;
-            color: var(--text-muted);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            transition: all 0.15s;
-        }
-
-        .btn-icon:hover { border-color: var(--border-hover); color: var(--text); }
+        /* Nav tabs */
+        .nav { max-width: 1200px; margin: 0 auto; padding: 12px 24px 0; display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+        .nav-tab { padding: 8px 16px; border: none; background: transparent; color: var(--text-3); font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; transition: .15s; font-family: 'Inter',sans-serif; }
+        .nav-tab.active { color: var(--accent-l); border-bottom-color: var(--accent); }
+        .nav-tab:hover:not(.active) { color: var(--text); }
 
         /* Main */
-        .main {
-            max-width: 1120px;
-            margin: 0 auto;
-            padding: 20px 24px 40px;
-        }
+        .main { max-width: 1200px; margin: 0 auto; padding: 16px 24px 40px; }
+        .page { display: none; }
+        .page.active { display: block; }
 
         /* Stats */
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-bottom: 20px;
-        }
+        .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 16px; }
+        .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--r); padding: 14px; }
+        .stat-v { font-size: 24px; font-weight: 700; line-height: 1.1; }
+        .stat-l { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; margin-top: 2px; }
 
-        .stat {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            padding: 16px;
-            transition: border-color 0.15s;
-        }
-
-        .stat:hover { border-color: var(--border-hover); }
-
-        .stat-value {
-            font-size: 26px;
-            font-weight: 700;
-            line-height: 1.1;
-            margin-bottom: 2px;
-        }
-
-        .stat-label {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-weight: 500;
-        }
-
-        /* Grid layout */
-        .grid {
-            display: grid;
-            grid-template-columns: 380px 1fr;
-            gap: 16px;
-        }
+        /* Grid */
+        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 12px; }
 
         /* Card */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            overflow: hidden;
-        }
-
-        .card-header {
-            padding: 14px 16px;
-            border-bottom: 1px solid var(--border);
-            font-size: 13px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .card-body { padding: 16px; }
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+        .card-h { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+        .card-b { padding: 14px; }
 
         /* Form */
-        .form-label {
-            display: block;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 6px;
+        .f-label { display: block; font-size: 10px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 5px; }
+        .f-input, .f-area, .f-sel {
+            width: 100%; padding: 8px 11px; background: var(--bg-input);
+            border: 1px solid var(--border); border-radius: var(--rs); color: var(--text);
+            font-family: 'Inter',sans-serif; font-size: 13px; outline: none; transition: border .15s;
         }
-
-        .form-input, .form-textarea, .form-select {
-            width: 100%;
-            padding: 9px 12px;
-            background: var(--bg-input);
-            border: 1px solid var(--border);
-            border-radius: var(--r-sm);
-            color: var(--text);
-            font-family: 'Inter', sans-serif;
-            font-size: 13px;
-            outline: none;
-            transition: border-color 0.15s;
-        }
-
-        .form-input:focus, .form-textarea:focus, .form-select:focus {
-            border-color: var(--accent);
-        }
-
-        .form-textarea {
-            resize: vertical;
-            min-height: 120px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-        }
-
-        .form-select {
-            cursor: pointer;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2371717a' d='M5 7L0 2h10z'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 10px center;
-            padding-right: 28px;
-        }
-
-        .form-group { margin-bottom: 12px; }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .form-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+        .f-input:focus, .f-area:focus, .f-sel:focus { border-color: var(--accent); }
+        .f-area { resize: vertical; min-height: 100px; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; line-height: 1.5; }
+        .f-sel { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2371717a' d='M5 7L0 2h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+        .f-g { margin-bottom: 10px; }
+        .f-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .f-hint { font-size: 11px; color: var(--text-3); margin-top: 3px; }
 
         /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 2px;
-            margin-bottom: 14px;
-            background: var(--bg);
-            border-radius: var(--r-sm);
-            padding: 3px;
-        }
-
-        .tab {
-            flex: 1;
-            padding: 7px 12px;
-            border: none;
-            background: transparent;
-            color: var(--text-muted);
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            border-radius: 4px;
-            transition: all 0.15s;
-            font-family: 'Inter', sans-serif;
-        }
-
-        .tab.active {
-            background: var(--accent);
-            color: white;
-        }
-
+        .tabs { display: flex; gap: 2px; margin-bottom: 12px; background: var(--bg); border-radius: var(--rs); padding: 3px; }
+        .tab { flex: 1; padding: 6px 10px; border: none; background: transparent; color: var(--text-3); font-size: 12px; font-weight: 500; cursor: pointer; border-radius: 4px; transition: .15s; font-family: 'Inter',sans-serif; }
+        .tab.active { background: var(--accent); color: #fff; }
         .tab:hover:not(.active) { color: var(--text); }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
+        .tc { display: none; }
+        .tc.active { display: block; }
 
-        /* Button */
-        .btn {
-            padding: 9px 16px;
-            border: none;
-            border-radius: var(--r-sm);
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s;
-            font-family: 'Inter', sans-serif;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            width: 100%;
-            justify-content: center;
-        }
-
-        .btn-primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        .btn-primary:hover { background: var(--accent-light); }
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .btn-sm {
-            padding: 5px 10px;
-            font-size: 11px;
-            width: auto;
-        }
-
-        .btn-ghost {
-            background: transparent;
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
-        }
-
-        .btn-ghost:hover { border-color: var(--border-hover); color: var(--text); }
-
-        .btn-danger-sm {
-            padding: 5px 10px;
-            font-size: 11px;
-            background: var(--danger-bg);
-            color: var(--danger);
-            border: 1px solid rgba(239, 68, 68, 0.15);
-            border-radius: var(--r-sm);
-            cursor: pointer;
-            font-family: 'Inter', sans-serif;
-            font-weight: 500;
-            width: auto;
-        }
-
-        .btn-danger-sm:hover { background: rgba(239, 68, 68, 0.15); }
+        /* Buttons */
+        .btn { padding: 8px 14px; border: none; border-radius: var(--rs); font-size: 13px; font-weight: 600; cursor: pointer; transition: .15s; font-family: 'Inter',sans-serif; display: inline-flex; align-items: center; gap: 5px; width: 100%; justify-content: center; }
+        .btn-p { background: var(--accent); color: #fff; }
+        .btn-p:hover { background: var(--accent-l); }
+        .btn-p:disabled { opacity: .5; cursor: not-allowed; }
+        .btn-s { padding: 5px 10px; font-size: 11px; width: auto; background: transparent; color: var(--text-2); border: 1px solid var(--border); border-radius: var(--rs); cursor: pointer; font-family: 'Inter',sans-serif; font-weight: 500; }
+        .btn-s:hover { border-color: var(--border-h); color: var(--text); }
+        .btn-d { padding: 5px 8px; font-size: 11px; background: rgba(239,68,68,.08); color: var(--red); border: 1px solid rgba(239,68,68,.12); border-radius: var(--rs); cursor: pointer; font-family: 'Inter',sans-serif; font-weight: 500; width: auto; }
+        .btn-d:hover { background: rgba(239,68,68,.15); }
 
         /* Download items */
-        .dl-list { display: flex; flex-direction: column; gap: 8px; }
-
-        .dl-item {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--r-sm);
-            padding: 12px 14px;
-            transition: border-color 0.15s;
-        }
-
-        .dl-item:hover { border-color: var(--border-hover); }
-
-        .dl-top {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 6px;
-        }
-
-        .dl-name {
-            font-size: 13px;
-            font-weight: 500;
-            word-break: break-all;
-            line-height: 1.4;
-        }
-
-        .dl-actions {
-            display: flex;
-            gap: 4px;
-            flex-shrink: 0;
-        }
-
-        .dl-meta {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-bottom: 8px;
-        }
+        .dl-list { display: flex; flex-direction: column; gap: 6px; }
+        .dl-item { background: var(--bg); border: 1px solid var(--border); border-radius: var(--rs); padding: 10px 12px; transition: border .15s; }
+        .dl-item:hover { border-color: var(--border-h); }
+        .dl-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+        .dl-name { font-size: 12px; font-weight: 500; word-break: break-all; line-height: 1.3; }
+        .dl-acts { display: flex; gap: 4px; flex-shrink: 0; }
+        .dl-meta { display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--text-3); margin-bottom: 6px; flex-wrap: wrap; }
 
         /* Status */
-        .st {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
+        .st { display: inline-flex; padding: 2px 7px; border-radius: 8px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+        .st-q { background: rgba(99,102,241,.1); color: var(--accent-l); }
+        .st-d { background: rgba(234,179,8,.08); color: var(--yellow); }
+        .st-c { background: rgba(34,197,94,.08); color: var(--green); }
+        .st-f { background: rgba(239,68,68,.08); color: var(--red); }
+        .st-e { background: rgba(168,85,247,.08); color: var(--purple); }
+        .eng { font-size: 9px; padding: 1px 5px; border-radius: 4px; font-weight: 500; }
+        .eng-c { background: rgba(6,182,212,.1); color: var(--cyan); }
+        .eng-a { background: rgba(168,85,247,.1); color: var(--purple); }
 
-        .st-queued { background: rgba(99, 102, 241, 0.1); color: var(--accent-light); }
-        .st-downloading { background: var(--warning-bg); color: var(--warning); }
-        .st-completed { background: var(--success-bg); color: var(--success); }
-        .st-failed { background: var(--danger-bg); color: var(--danger); }
-
-        .engine-tag {
-            font-size: 10px;
-            padding: 1px 6px;
-            border-radius: 4px;
-            font-weight: 500;
-        }
-
-        .engine-tag.curl { background: rgba(6, 182, 212, 0.1); color: var(--cyan); }
-        .engine-tag.aria { background: rgba(168, 85, 247, 0.1); color: var(--purple); }
-
-        /* Progress bar */
-        .progress {
-            width: 100%;
-            height: 3px;
-            background: var(--bg-elevated);
-            border-radius: 2px;
-            overflow: hidden;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent), var(--cyan));
-            border-radius: 2px;
-            transition: width 0.6s ease;
-            position: relative;
-        }
-
-        .progress-fill.active::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
-            animation: shimmer 1.5s infinite;
-        }
-
-        @keyframes shimmer {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(100%); }
-        }
-
-        .dl-progress-info {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-top: 4px;
-        }
-
-        .dl-speed { color: var(--cyan); font-weight: 500; }
+        /* Progress */
+        .prog { width: 100%; height: 3px; background: var(--bg-raised); border-radius: 2px; overflow: hidden; }
+        .prog-fill { height: 100%; background: linear-gradient(90deg,var(--accent),var(--cyan)); border-radius: 2px; transition: width .6s ease; position: relative; }
+        .prog-fill.on::after { content:''; position:absolute; inset:0; background: linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent); animation: shimmer 1.5s infinite; }
+        @keyframes shimmer { from{transform:translateX(-100%)} to{transform:translateX(100%)} }
+        .dl-pi { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-3); margin-top: 3px; }
+        .dl-spd { color: var(--cyan); font-weight: 500; }
 
         /* File table */
-        .file-table { width: 100%; border-collapse: collapse; }
+        .ftbl { width: 100%; border-collapse: collapse; }
+        .ftbl th { text-align: left; padding: 7px 12px; font-size: 10px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+        .ftbl td { padding: 9px 12px; font-size: 13px; border-bottom: 1px solid rgba(42,42,46,.5); }
+        .ftbl tr:last-child td { border-bottom: none; }
+        .ftbl tr:hover td { background: rgba(99,102,241,.02); }
+        .flink { color: var(--accent-l); text-decoration: none; font-weight: 500; }
+        .flink:hover { text-decoration: underline; }
 
-        .file-table th {
-            text-align: left;
-            padding: 8px 12px;
-            font-size: 10px;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid var(--border);
-        }
+        /* Video Player */
+        .player-wrap { position: relative; background: #000; border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+        .player-wrap video { width: 100%; max-height: 70vh; display: block; }
+        .player-empty { display: flex; align-items: center; justify-content: center; min-height: 320px; color: var(--text-3); font-size: 14px; flex-direction: column; gap: 8px; }
+        .player-empty span { font-size: 40px; opacity: .3; }
 
-        .file-table td {
-            padding: 10px 12px;
-            font-size: 13px;
-            border-bottom: 1px solid rgba(46, 46, 51, 0.5);
-        }
-
-        .file-table tr:last-child td { border-bottom: none; }
-
-        .file-table tr:hover td { background: rgba(99, 102, 241, 0.02); }
-
-        .file-link {
-            color: var(--accent-light);
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        .file-link:hover { text-decoration: underline; }
+        /* Media list */
+        .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+        .media-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--rs); padding: 12px; cursor: pointer; transition: .15s; }
+        .media-card:hover { border-color: var(--accent); background: rgba(99,102,241,.03); }
+        .media-card.playing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .mc-icon { font-size: 28px; margin-bottom: 6px; }
+        .mc-name { font-size: 13px; font-weight: 500; word-break: break-all; line-height: 1.3; margin-bottom: 4px; }
+        .mc-meta { font-size: 11px; color: var(--text-3); display: flex; gap: 8px; align-items: center; }
+        .mc-badge { font-size: 9px; padding: 1px 5px; border-radius: 4px; font-weight: 600; text-transform: uppercase; }
+        .mc-vid { background: rgba(99,102,241,.1); color: var(--accent-l); }
+        .mc-aud { background: rgba(34,197,94,.1); color: var(--green); }
+        .mc-sub { background: rgba(234,179,8,.1); color: var(--yellow); }
 
         /* Empty */
-        .empty {
-            text-align: center;
-            padding: 32px 16px;
-            color: var(--text-muted);
-            font-size: 13px;
-        }
-
-        .empty-icon { font-size: 28px; margin-bottom: 8px; opacity: 0.4; }
+        .empty { text-align: center; padding: 28px 14px; color: var(--text-3); font-size: 13px; }
+        .empty-i { font-size: 24px; margin-bottom: 6px; opacity: .4; }
 
         /* Toast */
-        .toast-wrap {
-            position: fixed;
-            top: 68px;
-            right: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            z-index: 1000;
-        }
-
-        .toast {
-            padding: 10px 16px;
-            border-radius: var(--r-sm);
-            font-size: 13px;
-            font-weight: 500;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-            animation: slideIn 0.25s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            min-width: 260px;
-        }
-
-        .toast-ok { background: #052e16; border: 1px solid rgba(34, 197, 94, 0.2); color: #86efac; }
-        .toast-err { background: #450a0a; border: 1px solid rgba(239, 68, 68, 0.2); color: #fca5a5; }
-        .toast-info { background: #1e1b4b; border: 1px solid rgba(99, 102, 241, 0.2); color: #c7d2fe; }
-
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
+        .tw { position: fixed; top: 64px; right: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 1000; }
+        .toast { padding: 9px 14px; border-radius: var(--rs); font-size: 12px; font-weight: 500; box-shadow: 0 8px 32px rgba(0,0,0,.5); animation: slideIn .25s ease; display: flex; align-items: center; gap: 6px; min-width: 220px; }
+        .t-ok { background: #052e16; border: 1px solid rgba(34,197,94,.2); color: #86efac; }
+        .t-err { background: #450a0a; border: 1px solid rgba(239,68,68,.2); color: #fca5a5; }
+        .t-info { background: #1e1b4b; border: 1px solid rgba(99,102,241,.2); color: #c7d2fe; }
+        @keyframes slideIn { from{transform:translateX(100%);opacity:0} to{transform:translateX(0);opacity:1} }
 
         /* Modal */
-        .modal-bg {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(8px);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 200;
-        }
+        .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.75); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; z-index:200; }
+        .modal { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--r); padding:22px; max-width:380px; width:90%; }
+        .modal h2 { font-size:15px; margin-bottom:4px; }
+        .modal p { color:var(--text-2); font-size:12px; margin-bottom:16px; }
 
-        .modal {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            padding: 24px;
-            max-width: 380px;
-            width: 90%;
-        }
+        .spin { width:13px; height:13px; border:2px solid rgba(255,255,255,.2); border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; display:inline-block; }
+        @keyframes spin { to{transform:rotate(360deg)} }
+        .cp { background:none; border:none; color:var(--text-3); cursor:pointer; padding:3px; font-size:11px; }
+        .cp:hover { color:var(--accent-l); }
 
-        .modal h2 { font-size: 16px; margin-bottom: 4px; }
-        .modal p { color: var(--text-secondary); font-size: 13px; margin-bottom: 18px; }
-
-        /* Spinner */
-        .spin {
-            width: 14px;
-            height: 14px;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            border-top-color: white;
-            border-radius: 50%;
-            animation: spin 0.6s linear infinite;
-            display: inline-block;
-        }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* Copy button */
-        .cp {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            padding: 4px;
-            font-size: 12px;
-        }
-        .cp:hover { color: var(--accent-light); }
-
-        /* Responsive */
-        @media (max-width: 860px) {
-            .grid { grid-template-columns: 1fr; }
-            .stats { grid-template-columns: repeat(2, 1fr); }
-        }
-
-        @media (max-width: 480px) {
-            .stats { grid-template-columns: 1fr 1fr; }
-            .form-row { grid-template-columns: 1fr; }
-        }
-
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        @media(max-width:860px) { .grid{grid-template-columns:1fr} .stats{grid-template-columns:repeat(2,1fr)} .media-grid{grid-template-columns:1fr} }
+        ::-webkit-scrollbar { width:5px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
     </style>
 </head>
 <body>
 
 <!-- Auth Modal -->
-<div id="authModal" class="modal-bg" style="display:none;">
+<div id="authModal" class="modal-bg" style="display:none">
     <div class="modal">
         <h2>🔐 Connect</h2>
-        <p>Enter your API key to access the dashboard.</p>
-        <div class="form-group">
-            <label class="form-label">API Key</label>
-            <input type="password" id="apiKeyInput" class="form-input" placeholder="Enter API key..." autofocus>
+        <p>Enter API key to access dashboard.</p>
+        <div class="f-g">
+            <label class="f-label">API Key</label>
+            <input type="password" id="apiKeyInput" class="f-input" placeholder="Enter API key..." autofocus>
         </div>
-        <div class="form-group">
-            <label class="form-label">Server URL (optional)</label>
-            <input type="text" id="serverUrlInput" class="form-input" placeholder="http://your-server:9090">
-            <div class="form-hint">Leave empty to use current URL</div>
+        <div class="f-g">
+            <label class="f-label">Server URL (optional)</label>
+            <input type="text" id="serverUrlInput" class="f-input" placeholder="http://your-server:9090">
+            <div class="f-hint">Leave empty for current URL</div>
         </div>
-        <button class="btn btn-primary" onclick="authenticate()">Connect</button>
+        <button class="btn btn-p" onclick="authenticate()">Connect</button>
     </div>
 </div>
 
-<!-- Toast -->
-<div class="toast-wrap" id="toasts"></div>
+<div class="tw" id="toasts"></div>
 
 <!-- Header -->
-<header class="header">
-    <div class="header-inner">
-        <div class="logo">
-            <div class="logo-mark">⬇</div>
-            <span>Download Proxy</span>
-        </div>
-        <div class="header-right">
-            <div class="badge">
-                <div class="status-dot" id="statusDot"></div>
-                <span id="statusText">Connecting...</span>
-            </div>
-            <button class="btn-icon" onclick="showAuthModal()" title="API Key">🔑</button>
+<header class="hdr">
+    <div class="hdr-inner">
+        <div class="logo"><div class="logo-mark">⬇</div><span>Download Proxy</span></div>
+        <div class="hdr-r">
+            <div class="badge"><div class="dot" id="sDot"></div><span id="sTxt">...</span></div>
+            <button class="btn-i" onclick="showAuth()" title="Settings">⚙</button>
         </div>
     </div>
 </header>
 
+<!-- Nav -->
+<nav class="nav">
+    <button class="nav-tab active" onclick="switchPage('downloads', this)">📥 Downloads</button>
+    <button class="nav-tab" onclick="switchPage('media', this)">🎬 Media</button>
+    <button class="nav-tab" onclick="switchPage('files', this)">📁 Files</button>
+</nav>
+
 <!-- Main -->
 <div class="main">
 
-    <!-- Stats -->
-    <div class="stats">
-        <div class="stat">
-            <div class="stat-value" id="sActive">0</div>
-            <div class="stat-label">Active</div>
+    <!-- ===== PAGE: Downloads ===== -->
+    <div id="page-downloads" class="page active">
+        <div class="stats">
+            <div class="stat"><div class="stat-v" id="sAct">0</div><div class="stat-l">Active</div></div>
+            <div class="stat"><div class="stat-v" id="sDone">0</div><div class="stat-l">Completed</div></div>
+            <div class="stat"><div class="stat-v" id="sMedia">0</div><div class="stat-l">Media</div></div>
+            <div class="stat"><div class="stat-v" id="sDisk">--</div><div class="stat-l">Free GB</div></div>
         </div>
-        <div class="stat">
-            <div class="stat-value" id="sCompleted">0</div>
-            <div class="stat-label">Completed</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value" id="sFiles">0</div>
-            <div class="stat-label">Files</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value" id="sDisk">--</div>
-            <div class="stat-label">Free GB</div>
+
+        <div class="grid">
+            <!-- Form -->
+            <div class="card">
+                <div class="card-h">📥 New Download</div>
+                <div class="card-b">
+                    <div class="tabs">
+                        <button class="tab active" onclick="switchTab('url',this)">URL</button>
+                        <button class="tab" onclick="switchTab('curl',this)">Paste cURL</button>
+                    </div>
+                    <div id="tab-url" class="tc active">
+                        <div class="f-g"><label class="f-label">Download URL</label><input type="text" id="dlUrl" class="f-input" placeholder="https://example.com/file.zip"></div>
+                        <div class="f-g"><label class="f-label">Headers (JSON)</label><textarea id="dlHeaders" class="f-area" style="min-height:70px" placeholder='{"referer":"...","cookie":"..."}'></textarea></div>
+                        <div class="f-row">
+                            <div class="f-g"><label class="f-label">Filename</label><input type="text" id="dlFn" class="f-input" placeholder="Auto-detect"></div>
+                            <div class="f-g"><label class="f-label">Engine</label><select id="dlEng" class="f-sel"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div>
+                        </div>
+                        <button class="btn btn-p" onclick="submitUrl()" id="bUrl">⬇ Download</button>
+                    </div>
+                    <div id="tab-curl" class="tc">
+                        <div class="f-g"><label class="f-label">cURL Command</label><textarea id="dlCurl" class="f-area" style="min-height:120px" placeholder="curl 'https://...' -H '...'"></textarea><div class="f-hint">Chrome DevTools → Network → Copy as cURL</div></div>
+                        <div class="f-row">
+                            <div class="f-g"><label class="f-label">Filename</label><input type="text" id="dlCFn" class="f-input" placeholder="Auto-detect"></div>
+                            <div class="f-g"><label class="f-label">Engine</label><select id="dlCEng" class="f-sel"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div>
+                        </div>
+                        <button class="btn btn-p" onclick="submitCurl()" id="bCurl">⬇ Download</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Download list -->
+            <div class="card">
+                <div class="card-h"><span>📊 Downloads</span><button class="btn-s" onclick="refreshAll()">↻</button></div>
+                <div class="card-b" style="padding:10px;max-height:600px;overflow-y:auto;">
+                    <div class="dl-list" id="dlList"><div class="empty"><div class="empty-i">📭</div><p>No downloads</p></div></div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Grid: Form + Downloads -->
-    <div class="grid">
-
-        <!-- Left: New Download -->
+    <!-- ===== PAGE: Media ===== -->
+    <div id="page-media" class="page">
+        <div class="player-wrap" id="playerWrap">
+            <div class="player-empty" id="playerEmpty"><span>🎬</span>Select a video to play</div>
+            <video id="videoPlayer" controls style="display:none"></video>
+        </div>
+        <div id="nowPlaying" style="margin-bottom:12px;font-size:13px;font-weight:500;display:none"></div>
         <div class="card">
-            <div class="card-header">
-                <span>📥 New Download</span>
-            </div>
-            <div class="card-body">
-                <div class="tabs">
-                    <button class="tab active" onclick="switchTab('url', this)">URL</button>
-                    <button class="tab" onclick="switchTab('curl', this)">Paste cURL</button>
-                </div>
-
-                <!-- URL Tab -->
-                <div id="tab-url" class="tab-content active">
-                    <div class="form-group">
-                        <label class="form-label">Download URL</label>
-                        <input type="text" id="dlUrl" class="form-input" placeholder="https://example.com/file.zip">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Headers (JSON)</label>
-                        <textarea id="dlHeaders" class="form-textarea" style="min-height:80px" placeholder='{"referer": "https://...", "cookie": "..."}'></textarea>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Filename</label>
-                            <input type="text" id="dlFilename" class="form-input" placeholder="Auto-detect">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Engine</label>
-                            <select id="dlEngine" class="form-select">
-                                <option value="auto">Auto</option>
-                                <option value="curl">curl (CF bypass)</option>
-                                <option value="aria2c">aria2c (fast)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" onclick="submitUrl()" id="btnUrl">⬇ Start Download</button>
-                </div>
-
-                <!-- cURL Tab -->
-                <div id="tab-curl" class="tab-content">
-                    <div class="form-group">
-                        <label class="form-label">Paste cURL Command</label>
-                        <textarea id="dlCurl" class="form-textarea" style="min-height:140px" placeholder="curl 'https://example.com/file.zip' \
-  -H 'referer: https://...' \
-  -H 'cookie: ...'"></textarea>
-                        <div class="form-hint">Chrome DevTools → Network → Right-click → Copy as cURL (bash)</div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Filename</label>
-                            <input type="text" id="dlCurlFn" class="form-input" placeholder="Auto-detect">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Engine</label>
-                            <select id="dlCurlEngine" class="form-select">
-                                <option value="auto">Auto</option>
-                                <option value="curl">curl (CF bypass)</option>
-                                <option value="aria2c">aria2c (fast)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" onclick="submitCurl()" id="btnCurl">⬇ Start Download</button>
-                </div>
+            <div class="card-h"><span>🎬 Media Library</span><button class="btn-s" onclick="refreshMedia()">↻</button></div>
+            <div class="card-b" style="padding:10px;">
+                <div class="media-grid" id="mediaList"><div class="empty"><div class="empty-i">🎬</div><p>No media files. Download and extract RAR files to see videos here.</p></div></div>
             </div>
         </div>
+    </div>
 
-        <!-- Right: Downloads + Files -->
-        <div style="display:flex;flex-direction:column;gap:16px;">
-
-            <!-- Downloads -->
-            <div class="card">
-                <div class="card-header">
-                    <span>📊 Downloads</span>
-                    <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Refresh</button>
-                </div>
-                <div class="card-body" style="padding:12px;">
-                    <div class="dl-list" id="dlList">
-                        <div class="empty">
-                            <div class="empty-icon">📭</div>
-                            <p>No downloads yet</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Files -->
-            <div class="card">
-                <div class="card-header">
-                    <span>📁 Files on Server</span>
-                    <button class="btn btn-ghost btn-sm" onclick="refreshFiles()">↻</button>
-                </div>
-                <div class="card-body" style="padding:0;">
-                    <div id="fileList">
-                        <div class="empty">
-                            <div class="empty-icon">📂</div>
-                            <p>No files</p>
-                        </div>
-                    </div>
-                </div>
+    <!-- ===== PAGE: Files ===== -->
+    <div id="page-files" class="page">
+        <div class="card">
+            <div class="card-h"><span>📁 All Files on Server</span><button class="btn-s" onclick="refreshFiles()">↻</button></div>
+            <div class="card-b" style="padding:0">
+                <div id="fileList"><div class="empty"><div class="empty-i">📂</div><p>No files</p></div></div>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    let apiKey = localStorage.getItem('dp_key') || '';
-    let baseUrl = localStorage.getItem('dp_url') || '';
-    let pollTimer = null;
-    let hasActive = false;
+let K = localStorage.getItem('dp_key') || '';
+let U = localStorage.getItem('dp_url') || '';
+let poll = null, hasAct = false;
 
-    document.addEventListener('DOMContentLoaded', () => {
-        if (!apiKey) { showAuthModal(); }
-        else { init(); }
-        document.getElementById('apiKeyInput').addEventListener('keypress', e => {
-            if (e.key === 'Enter') authenticate();
-        });
-    });
+document.addEventListener('DOMContentLoaded', () => {
+    if (!K) showAuth(); else init();
+    document.getElementById('apiKeyInput').addEventListener('keypress', e => { if (e.key==='Enter') authenticate(); });
+});
 
-    function getBase() {
-        return (baseUrl || window.location.origin).replace(/\/$/, '');
+function base() { return (U || location.origin).replace(/\/$/,''); }
+function showAuth() { document.getElementById('authModal').style.display='flex'; document.getElementById('apiKeyInput').focus(); }
+function authenticate() {
+    K = document.getElementById('apiKeyInput').value.trim();
+    U = document.getElementById('serverUrlInput').value.trim();
+    if (!K) { toast('Enter API key','err'); return; }
+    localStorage.setItem('dp_key', K);
+    localStorage.setItem('dp_url', U);
+    document.getElementById('authModal').style.display='none';
+    init();
+}
+
+function init() { health(); refreshAll(); refreshMedia(); startPoll(); }
+function startPoll() {
+    if (poll) clearInterval(poll);
+    const ms = hasAct ? 1500 : 5000;
+    poll = setInterval(() => { refreshAll(); health(); }, ms);
+}
+
+async function api(m, p, b) {
+    const o = { method:m, headers: {'Authorization':'Bearer '+K, 'Content-Type':'application/json'} };
+    if (b) o.body = JSON.stringify(b);
+    const r = await fetch(base()+p, o);
+    if (r.status===401||r.status===403) { showAuth(); throw new Error('Unauthorized'); }
+    if (!r.ok) { const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||'Failed'); }
+    return r.json();
+}
+
+async function health() {
+    try {
+        const d = await api('GET','/health');
+        document.getElementById('sDot').className='dot';
+        document.getElementById('sTxt').textContent='Online';
+        document.getElementById('sDisk').textContent=d.disk_free_gb??'--';
+        document.getElementById('sMedia').textContent=d.media_count??0;
+    } catch {
+        document.getElementById('sDot').className='dot off';
+        document.getElementById('sTxt').textContent='Offline';
     }
+}
 
-    function showAuthModal() {
-        document.getElementById('authModal').style.display = 'flex';
-        document.getElementById('apiKeyInput').value = apiKey;
-        document.getElementById('serverUrlInput').value = baseUrl;
-        document.getElementById('apiKeyInput').focus();
-    }
+function switchPage(name, el) {
+    document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('page-'+name).classList.add('active');
+    if (name==='media') refreshMedia();
+    if (name==='files') refreshFiles();
+}
 
-    function authenticate() {
-        apiKey = document.getElementById('apiKeyInput').value.trim();
-        baseUrl = document.getElementById('serverUrlInput').value.trim();
-        if (!apiKey) { toast('Enter an API key', 'err'); return; }
-        localStorage.setItem('dp_key', apiKey);
-        localStorage.setItem('dp_url', baseUrl);
-        document.getElementById('authModal').style.display = 'none';
-        init();
-    }
+function switchTab(name, el) {
+    el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    el.closest('.card-b').querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tab-'+name).classList.add('active');
+}
 
-    function init() {
-        checkHealth();
+// Submit
+async function submitUrl() {
+    const url=document.getElementById('dlUrl').value.trim();
+    if (!url) { toast('Enter URL','err'); return; }
+    let headers={};
+    const ht=document.getElementById('dlHeaders').value.trim();
+    if (ht) { try{headers=JSON.parse(ht)}catch{toast('Invalid JSON','err');return} }
+    const filename=document.getElementById('dlFn').value.trim()||undefined;
+    const engine=document.getElementById('dlEng').value;
+    const btn=document.getElementById('bUrl');
+    btn.disabled=true; btn.innerHTML='<span class="spin"></span> Starting...';
+    try {
+        const d = await api('POST','/api/download',{url,headers,filename,engine});
+        toast('Started: '+d.filename,'ok');
+        document.getElementById('dlUrl').value='';
+        document.getElementById('dlHeaders').value='';
+        document.getElementById('dlFn').value='';
         refreshAll();
-        startPolling();
-    }
+    } catch(e){toast(e.message,'err')}
+    finally{btn.disabled=false;btn.innerHTML='⬇ Download'}
+}
 
-    function startPolling() {
-        if (pollTimer) clearInterval(pollTimer);
-        // Adaptive: 1.5s when active, 5s when idle
-        const interval = hasActive ? 1500 : 5000;
-        pollTimer = setInterval(() => {
-            refreshAll();
-            checkHealth();
-        }, interval);
-    }
+async function submitCurl() {
+    const cmd=document.getElementById('dlCurl').value.trim();
+    if (!cmd) { toast('Paste cURL','err'); return; }
+    const fn=document.getElementById('dlCFn').value.trim()||undefined;
+    const eng=document.getElementById('dlCEng').value;
+    const btn=document.getElementById('bCurl');
+    btn.disabled=true; btn.innerHTML='<span class="spin"></span> Starting...';
+    try {
+        const d=await api('POST','/api/download',{url:'placeholder',curl_command:cmd,filename:fn,engine:eng});
+        toast('Started: '+d.filename,'ok');
+        document.getElementById('dlCurl').value='';
+        document.getElementById('dlCFn').value='';
+        refreshAll();
+    } catch(e){toast(e.message,'err')}
+    finally{btn.disabled=false;btn.innerHTML='⬇ Download'}
+}
 
-    async function api(method, path, body) {
-        const opts = {
-            method,
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-            },
-        };
-        if (body) opts.body = JSON.stringify(body);
-        const res = await fetch(getBase() + path, opts);
-        if (res.status === 401 || res.status === 403) {
-            showAuthModal();
-            throw new Error('Unauthorized');
-        }
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(err.detail || 'Request failed');
-        }
-        return res.json();
-    }
+// Downloads
+async function refreshAll() {
+    try {
+        const data=await api('GET','/api/downloads');
+        renderDL(data.downloads||[]);
+    } catch{}
+}
 
-    async function checkHealth() {
-        try {
-            const d = await api('GET', '/health');
-            document.getElementById('statusDot').className = 'status-dot';
-            document.getElementById('statusText').textContent = 'Online';
-            document.getElementById('sDisk').textContent = d.disk_free_gb ?? '--';
-        } catch {
-            document.getElementById('statusDot').className = 'status-dot off';
-            document.getElementById('statusText').textContent = 'Offline';
-        }
-    }
+function renderDL(items) {
+    const el=document.getElementById('dlList');
+    const act=items.filter(i=>['downloading','queued','extracting'].includes(i.status)).length;
+    const done=items.filter(i=>i.status==='completed').length;
+    document.getElementById('sAct').textContent=act;
+    document.getElementById('sDone').textContent=done;
+    const was=hasAct; hasAct=act>0; if(hasAct!==was) startPoll();
 
-    function switchTab(name, el) {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-        el.classList.add('active');
-        document.getElementById(`tab-${name}`).classList.add('active');
-    }
+    if (!items.length) { el.innerHTML='<div class="empty"><div class="empty-i">📭</div><p>No downloads</p></div>'; return; }
 
-    // Submit URL
-    async function submitUrl() {
-        const url = document.getElementById('dlUrl').value.trim();
-        if (!url) { toast('Enter a URL', 'err'); return; }
+    const order={downloading:0,extracting:1,queued:2,completed:3,failed:4};
+    items.sort((a,b)=>(order[a.status]??5)-(order[b.status]??5)||(b.created_at||'').localeCompare(a.created_at||''));
 
-        let headers = {};
-        const ht = document.getElementById('dlHeaders').value.trim();
-        if (ht) {
-            try { headers = JSON.parse(ht); }
-            catch { toast('Invalid JSON headers', 'err'); return; }
+    el.innerHTML=items.map(d=>{
+        const stMap={queued:'st-q',downloading:'st-d',completed:'st-c',failed:'st-f',extracting:'st-e'};
+        const stLabel={extracting:'📦 extracting'};
+        const pct=d.percent||0;
+        const isActive=d.status==='downloading'||d.status==='extracting';
+        const eng=d.engine||'';
+        const engH=eng.includes('curl')?'<span class="eng eng-c">curl</span>':eng.includes('aria')?'<span class="eng eng-a">aria2c</span>':'';
+
+        let progH='';
+        if(isActive){
+            progH=`<div class="prog"><div class="prog-fill on" style="width:${pct}%"></div></div>
+            <div class="dl-pi"><span>${pct.toFixed(1)}% · ${hs(d.downloaded||0)}${d.total_size?' / '+hs(d.total_size):''}</span><span class="dl-spd">${d.speed||'...'}</span></div>`;
+        }else if(d.status==='completed'){
+            progH='<div class="prog"><div class="prog-fill" style="width:100%"></div></div>';
         }
 
-        const filename = document.getElementById('dlFilename').value.trim() || undefined;
-        const engine = document.getElementById('dlEngine').value;
-        const btn = document.getElementById('btnUrl');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spin"></span> Starting...';
-
-        try {
-            const d = await api('POST', '/api/download', { url, headers, filename, engine });
-            toast(`Started: ${d.filename}`, 'ok');
-            document.getElementById('dlUrl').value = '';
-            document.getElementById('dlHeaders').value = '';
-            document.getElementById('dlFilename').value = '';
-            refreshAll();
-        } catch (e) { toast(e.message, 'err'); }
-        finally { btn.disabled = false; btn.innerHTML = '⬇ Start Download'; }
-    }
-
-    // Submit cURL
-    async function submitCurl() {
-        const cmd = document.getElementById('dlCurl').value.trim();
-        if (!cmd) { toast('Paste a cURL command', 'err'); return; }
-
-        const filename = document.getElementById('dlCurlFn').value.trim() || undefined;
-        const engine = document.getElementById('dlCurlEngine').value;
-        const btn = document.getElementById('btnCurl');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spin"></span> Starting...';
-
-        try {
-            const d = await api('POST', '/api/download', {
-                url: 'placeholder',
-                curl_command: cmd,
-                filename,
-                engine,
-            });
-            toast(`Started: ${d.filename}`, 'ok');
-            document.getElementById('dlCurl').value = '';
-            document.getElementById('dlCurlFn').value = '';
-            refreshAll();
-        } catch (e) { toast(e.message, 'err'); }
-        finally { btn.disabled = false; btn.innerHTML = '⬇ Start Download'; }
-    }
-
-    // Refresh
-    async function refreshAll() {
-        try {
-            const data = await api('GET', '/api/downloads');
-            renderDownloads(data.downloads || []);
-        } catch {}
-        refreshFiles();
-    }
-
-    function renderDownloads(items) {
-        const el = document.getElementById('dlList');
-
-        // Stats
-        const active = items.filter(i => i.status === 'downloading' || i.status === 'queued').length;
-        const completed = items.filter(i => i.status === 'completed').length;
-
-        document.getElementById('sActive').textContent = active;
-        document.getElementById('sCompleted').textContent = completed;
-
-        // Adaptive polling
-        const wasActive = hasActive;
-        hasActive = active > 0;
-        if (hasActive !== wasActive) startPolling();
-
-        if (!items.length) {
-            el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>No downloads yet</p></div>';
-            return;
+        let actsH='';
+        if(d.status==='completed'&&d.download_url){
+            actsH=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpLink('${d.download_url}')">📋</button>`;
         }
 
-        // Sort: active first, then by created_at desc
-        items.sort((a, b) => {
-            const order = { downloading: 0, queued: 1, completed: 2, failed: 3 };
-            const diff = (order[a.status] ?? 4) - (order[b.status] ?? 4);
-            if (diff !== 0) return diff;
-            return (b.created_at || '').localeCompare(a.created_at || '');
+        let errH='';
+        if(d.status==='failed'&&d.error) errH=`<div style="font-size:10px;color:var(--red);margin-top:4px;word-break:break-all">❌ ${esc(d.error.substring(0,120))}</div>`;
+
+        const sizeH=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
+        const time=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
+        const icon=d.status==='extracting'?'📦':'📄';
+
+        return `<div class="dl-item">
+            <div class="dl-top"><div class="dl-name">${icon} ${esc(d.filename||'?')}</div><div class="dl-acts">${actsH}</div></div>
+            <div class="dl-meta"><span class="st ${stMap[d.status]||'st-q'}">${stLabel[d.status]||d.status}</span>${engH}${sizeH}<span>🕐 ${time}</span></div>
+            ${progH}${errH}
+        </div>`;
+    }).join('');
+}
+
+// Media
+async function refreshMedia() {
+    try {
+        const data=await api('GET','/api/media');
+        renderMedia(data.media||[]);
+    } catch{}
+}
+
+function renderMedia(items) {
+    const el=document.getElementById('mediaList');
+    if (!items.length) { el.innerHTML='<div class="empty"><div class="empty-i">🎬</div><p>No media files yet.<br>Download and extract RAR files to see videos here.</p></div>'; return; }
+
+    const videoExts=['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts'];
+
+    el.innerHTML=items.map(m=>{
+        const isVid=videoExts.includes(m.ext);
+        const icon=isVid?'🎬':'🎵';
+        const badge=isVid?'<span class="mc-badge mc-vid">VIDEO</span>':'<span class="mc-badge mc-aud">AUDIO</span>';
+        const subsH=m.subtitles?.length?`<span>🔤 ${m.subtitles.length} sub</span>`:'';
+
+        return `<div class="media-card" id="mc-${esc(m.filename)}" onclick="playMedia('${esc(m.filename)}','${m.stream_url}',${JSON.stringify(m.subtitles||[]).replace(/"/g,'&quot;')})">
+            <div class="mc-icon">${icon}</div>
+            <div class="mc-name">${esc(m.filename)}</div>
+            <div class="mc-meta">${badge}<span>${m.size_human}</span>${subsH}</div>
+        </div>`;
+    }).join('');
+}
+
+function playMedia(name, url, subs) {
+    const video=document.getElementById('videoPlayer');
+    const empty=document.getElementById('playerEmpty');
+    const now=document.getElementById('nowPlaying');
+
+    // Remove old tracks
+    video.querySelectorAll('track').forEach(t=>t.remove());
+
+    video.src=url;
+    video.style.display='block';
+    empty.style.display='none';
+    now.style.display='block';
+    now.innerHTML='🎬 <strong>'+esc(name)+'</strong> <button class="btn-s" onclick="window.open(\''+url+'\')">↗ Open</button>';
+
+    // Add subtitle tracks
+    if (subs && subs.length) {
+        subs.forEach((s,i)=>{
+            const track=document.createElement('track');
+            track.kind='subtitles';
+            track.label=s.filename;
+            track.src=s.url;
+            if(s.ext==='.vtt') track.srclang='en';
+            if(i===0) track.default=true;
+            video.appendChild(track);
         });
-
-        el.innerHTML = items.map(d => {
-            const stCls = `st st-${d.status}`;
-            const pct = d.percent || 0;
-            const isActive = d.status === 'downloading';
-            const engine = d.engine || '';
-            const engineTag = engine.includes('curl')
-                ? '<span class="engine-tag curl">curl</span>'
-                : engine.includes('aria')
-                    ? '<span class="engine-tag aria">aria2c</span>'
-                    : '';
-
-            let progressHtml = '';
-            if (isActive) {
-                progressHtml = `
-                    <div class="progress"><div class="progress-fill active" style="width:${pct}%"></div></div>
-                    <div class="dl-progress-info">
-                        <span>${pct.toFixed(1)}% · ${humanSize(d.downloaded || 0)}${d.total_size ? ' / ' + humanSize(d.total_size) : ''}</span>
-                        <span class="dl-speed">${d.speed || '...'}</span>
-                    </div>
-                `;
-            } else if (d.status === 'completed') {
-                progressHtml = `<div class="progress"><div class="progress-fill" style="width:100%"></div></div>`;
-            }
-
-            let actionsHtml = '';
-            if (d.status === 'completed' && d.download_url) {
-                actionsHtml = `
-                    <a href="${d.download_url}" class="btn btn-ghost btn-sm" target="_blank">↓</a>
-                    <button class="cp" onclick="copyLink('${d.download_url}')" title="Copy link">📋</button>
-                `;
-            }
-
-            let errorHtml = '';
-            if (d.status === 'failed' && d.error) {
-                errorHtml = `<div style="font-size:11px;color:var(--danger);margin-top:6px;word-break:break-all;">❌ ${escHtml(d.error.substring(0, 150))}</div>`;
-            }
-
-            let sizeInfo = '';
-            if (d.status === 'completed' && d.file_size) {
-                sizeInfo = `<span>${humanSize(d.file_size)}</span>`;
-            }
-
-            const time = d.created_at ? new Date(d.created_at).toLocaleTimeString() : '';
-
-            return `
-                <div class="dl-item">
-                    <div class="dl-top">
-                        <div class="dl-name">📄 ${escHtml(d.filename || 'Unknown')}</div>
-                        <div class="dl-actions">${actionsHtml}</div>
-                    </div>
-                    <div class="dl-meta">
-                        <span class="${stCls}">${d.status}</span>
-                        ${engineTag}
-                        ${sizeInfo}
-                        <span>🕐 ${time}</span>
-                    </div>
-                    ${progressHtml}
-                    ${errorHtml}
-                </div>
-            `;
-        }).join('');
     }
 
-    async function refreshFiles() {
-        try {
-            const data = await api('GET', '/api/files');
-            const files = data.files || [];
-            document.getElementById('sFiles').textContent = files.length;
+    video.play().catch(()=>{});
 
-            if (!files.length) {
-                document.getElementById('fileList').innerHTML = '<div class="empty"><div class="empty-icon">📂</div><p>No files</p></div>';
-                return;
-            }
+    // Highlight
+    document.querySelectorAll('.media-card').forEach(c=>c.classList.remove('playing'));
+    const card=document.getElementById('mc-'+name);
+    if(card) card.classList.add('playing');
 
-            document.getElementById('fileList').innerHTML = `
-                <table class="file-table">
-                    <thead><tr><th>File</th><th>Size</th><th></th></tr></thead>
-                    <tbody>
-                        ${files.map(f => `
-                            <tr>
-                                <td><a href="${f.download_url}" class="file-link" target="_blank">${escHtml(f.filename)}</a></td>
-                                <td style="color:var(--text-muted)">${f.size_human}</td>
-                                <td style="text-align:right">
-                                    <button class="cp" onclick="copyLink('${f.download_url}')">📋</button>
-                                    <button class="btn-danger-sm" onclick="deleteFile('${f.filename}')">✕</button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-        } catch {}
-    }
+    // Scroll to player
+    document.getElementById('playerWrap').scrollIntoView({behavior:'smooth', block:'start'});
+}
 
-    async function deleteFile(name) {
-        if (!confirm(`Delete ${name}?`)) return;
-        try {
-            await api('DELETE', `/api/files/${encodeURIComponent(name)}`);
-            toast(`Deleted ${name}`, 'ok');
-            refreshFiles();
-        } catch (e) { toast(e.message, 'err'); }
-    }
+// Files
+async function refreshFiles() {
+    try {
+        const data=await api('GET','/api/files');
+        const files=data.files||[];
+        if (!files.length) { document.getElementById('fileList').innerHTML='<div class="empty"><div class="empty-i">📂</div><p>No files</p></div>'; return; }
 
-    function copyLink(url) {
-        navigator.clipboard.writeText(url).then(() => toast('Link copied!', 'info'));
-    }
+        const icons={rar:'📦',mp4:'🎬',mkv:'🎬',avi:'🎬',mov:'🎬',webm:'🎬',mp3:'🎵',flac:'🎵',srt:'🔤',ass:'🔤',vtt:'🔤'};
 
-    function humanSize(bytes) {
-        if (!bytes) return '0 B';
-        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        let i = 0;
-        while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
-        return bytes.toFixed(1) + ' ' + units[i];
-    }
+        document.getElementById('fileList').innerHTML=`<table class="ftbl"><thead><tr><th>File</th><th>Size</th><th></th></tr></thead><tbody>
+            ${files.map(f=>{
+                const ext=f.filename.split('.').pop().toLowerCase();
+                const icon=icons[ext]||'📄';
+                const mediaBtn=f.is_media?`<button class="btn-s" onclick="switchPage('media',document.querySelectorAll('.nav-tab')[1]);playMedia('${esc(f.filename)}','${base()}/stream/${encodeURIComponent(f.filename)}',[])">▶</button>`:'';
+                const extractBtn=f.is_rar?`<button class="btn-s" onclick="extractFile('${esc(f.filename)}')">📦</button>`:'';
+                return `<tr>
+                    <td>${icon} <a href="${f.download_url}" class="flink" target="_blank">${esc(f.filename)}</a></td>
+                    <td style="color:var(--text-3)">${f.size_human}</td>
+                    <td style="text-align:right;white-space:nowrap">${mediaBtn}${extractBtn}<button class="cp" onclick="cpLink('${f.download_url}')">📋</button><button class="btn-d" onclick="delFile('${esc(f.filename)}')">✕</button></td>
+                </tr>`;
+            }).join('')}
+        </tbody></table>`;
+    } catch{}
+}
 
-    function escHtml(s) {
-        const d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
-    }
+async function delFile(name) {
+    if (!confirm('Delete '+name+'?')) return;
+    try { await api('DELETE','/api/files/'+encodeURIComponent(name)); toast('Deleted','ok'); refreshFiles(); refreshMedia(); }
+    catch(e) { toast(e.message,'err'); }
+}
 
-    function toast(msg, type = 'info') {
-        const wrap = document.getElementById('toasts');
-        const cls = type === 'ok' ? 'toast-ok' : type === 'err' ? 'toast-err' : 'toast-info';
-        const icon = type === 'ok' ? '✓' : type === 'err' ? '✕' : 'ℹ';
-        const el = document.createElement('div');
-        el.className = `toast ${cls}`;
-        el.innerHTML = `<span>${icon}</span> ${escHtml(msg)}`;
-        wrap.appendChild(el);
-        setTimeout(() => {
-            el.style.animation = 'slideIn 0.2s ease reverse';
-            setTimeout(() => el.remove(), 200);
-        }, 3000);
-    }
+async function extractFile(name) {
+    try { await api('POST','/api/extract/'+encodeURIComponent(name)); toast('Extracting '+name+'...','info'); refreshAll(); }
+    catch(e) { toast(e.message,'err'); }
+}
+
+function cpLink(url) { navigator.clipboard.writeText(url).then(()=>toast('Copied!','info')); }
+function hs(b) { if(!b)return'0 B'; const u=['B','KB','MB','GB','TB']; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++} return b.toFixed(1)+' '+u[i]; }
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function toast(msg, type='info') {
+    const w=document.getElementById('toasts');
+    const cls=type==='ok'?'t-ok':type==='err'?'t-err':'t-info';
+    const ic=type==='ok'?'✓':type==='err'?'✕':'ℹ';
+    const el=document.createElement('div'); el.className='toast '+cls;
+    el.innerHTML=`<span>${ic}</span> ${esc(msg)}`;
+    w.appendChild(el);
+    setTimeout(()=>{el.style.animation='slideIn .2s ease reverse';setTimeout(()=>el.remove(),200)},3000);
+}
 </script>
 </body>
 </html>
