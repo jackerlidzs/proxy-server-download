@@ -608,10 +608,20 @@ function dlgResolve(v){
 }
 
 // === Context Menu ===
+const ARCHIVE_EXTS=['.rar','.zip','.7z','.tar','.gz','.tgz','.tar.gz','.bz2'];
+function isArchiveFile(path){
+  const n=path.toLowerCase();
+  // Check .partN.rar pattern
+  if(/\.part\d+\.rar$/i.test(n))return true;
+  return ARCHIVE_EXTS.some(e=>n.endsWith(e));
+}
 function fmCtx(ev,path){
   ev.preventDefault();ev.stopPropagation();
   ctxTarget=path;
   const m=document.getElementById('ctxMenu');
+  // Show/hide extract option based on file type
+  const extItem=document.getElementById('ctxExtract');
+  if(extItem)extItem.style.display=isArchiveFile(path)?'block':'none';
   m.style.display='block';
   m.style.left=Math.min(ev.clientX,window.innerWidth-180)+'px';
   m.style.top=Math.min(ev.clientY,window.innerHeight-220)+'px';
@@ -627,6 +637,8 @@ function ctxAction(act){
     case 'rename':if(f)showRename(ctxTarget,f.name);break;
     case 'share':shareFile(ctxTarget);break;
     case 'download':if(f&&f.download_url)window.open(f.download_url);break;
+    case 'extract':extractF(ctxTarget);break;
+    case 'info':showDetail(ctxTarget);break;
     case 'delete':delF(ctxTarget);break;
   }
 }
