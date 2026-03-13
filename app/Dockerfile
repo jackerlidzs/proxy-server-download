@@ -9,28 +9,45 @@ RUN apt-get update && \
         libnss3 \
         libnghttp2-14 \
         libbrotli1 \
-        libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install curl-impersonate (Chrome version)
+# The release archive contains: curl-impersonate-chrome (binary), 
+# curl_chrome116 (wrapper script), libcurl-impersonate-chrome.so (library)
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
         CURL_ARCH="x86_64-linux-gnu"; \
     else \
         CURL_ARCH="aarch64-linux-gnu"; \
     fi && \
+    echo "Downloading curl-impersonate for ${CURL_ARCH}..." && \
     wget -q "https://github.com/lwthiker/curl-impersonate/releases/download/v0.6.1/curl-impersonate-v0.6.1.${CURL_ARCH}.tar.gz" \
         -O /tmp/curl-impersonate.tar.gz && \
     mkdir -p /opt/curl-impersonate && \
     tar -xzf /tmp/curl-impersonate.tar.gz -C /opt/curl-impersonate && \
-    ln -sf /opt/curl-impersonate/curl_chrome /usr/local/bin/curl_chrome && \
-    ln -sf /opt/curl-impersonate/curl-impersonate-chrome /usr/local/bin/curl-impersonate-chrome && \
     rm /tmp/curl-impersonate.tar.gz && \
-    # Set library path
+    # List what was extracted for debugging
+    ls -la /opt/curl-impersonate/ && \
+    # Make all scripts executable
+    chmod +x /opt/curl-impersonate/* && \
+    # Create symlinks in /usr/local/bin for all binaries
+    ln -sf /opt/curl-impersonate/curl-impersonate-chrome /usr/local/bin/curl-impersonate-chrome && \
+    # Create curl_chrome symlink (use curl_chrome116 wrapper if exists, else main binary)
+    if [ -f /opt/curl-impersonate/curl_chrome116 ]; then \
+        ln -sf /opt/curl-impersonate/curl_chrome116 /usr/local/bin/curl_chrome; \
+    elif [ -f /opt/curl-impersonate/curl_chrome110 ]; then \
+        ln -sf /opt/curl-impersonate/curl_chrome110 /usr/local/bin/curl_chrome; \
+    else \
+        ln -sf /opt/curl-impersonate/curl-impersonate-chrome /usr/local/bin/curl_chrome; \
+    fi && \
+    # Setup shared libraries
     echo "/opt/curl-impersonate" > /etc/ld.so.conf.d/curl-impersonate.conf && \
-    ldconfig
+    ldconfig && \
+    # Verify installation
+    echo "=== curl-impersonate installed ===" && \
+    ls -la /usr/local/bin/curl_chrome && \
+    curl_chrome --version || echo "Warning: curl_chrome version check failed (may still work)"
 
-# Set library path for curl-impersonate
 ENV LD_LIBRARY_PATH="/opt/curl-impersonate:${LD_LIBRARY_PATH}"
 
 WORKDIR /app
@@ -41,12 +58,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY static/ ./static/
 
-# Create download directory
 RUN mkdir -p /downloads
-
-# Verify installations
-RUN aria2c --version | head -1 && \
-    curl_chrome --version 2>/dev/null | head -1 || echo "curl_chrome installed (version check may not work)"
 
 EXPOSE 8000
 
