@@ -124,7 +124,8 @@ async def dl_curl(tid, url, headers, filename, resume=False):
     fp = DOWNLOAD_DIR / filename
     total = 0
 
-    # Get content-length for progress
+    # Get content-length and content-type for progress + validation
+    ct_type = ""
     try:
         hcmd = ["curl_chrome", "-L", "-s", "-S", "-I", "--max-redirs", "10", "--connect-timeout", "15"]
         for k, v in headers.items():
@@ -132,12 +133,15 @@ async def dl_curl(tid, url, headers, filename, resume=False):
         hcmd.append(url)
         p = await asyncio.create_subprocess_exec(*hcmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, _ = await asyncio.wait_for(p.communicate(), timeout=20)
-        for line in out.decode(errors="ignore").lower().split("\n"):
-            if "content-length:" in line:
+        for line in out.decode(errors="ignore").split("\n"):
+            ll = line.lower().strip()
+            if "content-length:" in ll:
                 try:
-                    total = int(line.split(":", 1)[1].strip())
+                    total = int(ll.split(":", 1)[1].strip())
                 except:
                     pass
+            if "content-type:" in ll:
+                ct_type = ll.split(":", 1)[1].strip()
     except:
         pass
 
@@ -163,14 +167,22 @@ async def dl_curl(tid, url, headers, filename, resume=False):
 
         if proc.returncode == 0 and fp.exists():
             sz = fp.stat().st_size
-            if sz < 1000:
+            # Check if we got an HTML page instead of the actual file
+            is_html = False
+            if sz < 100_000:  # Check files under 100KB for HTML content
                 try:
-                    c = fp.read_text(errors="ignore")
-                    if "<html" in c.lower() or "403" in c:
-                        fp.unlink()
-                        return False, f"Error page: {c[:100]}"
+                    c = fp.read_text(errors="ignore")[:2000]
+                    cl = c.lower()
+                    if any(tag in cl for tag in ["<html", "<!doctype", "<head>", "<body", "403 forbidden", "404 not found", "access denied"]):
+                        is_html = True
                 except:
                     pass
+            # Also check if content-type from HEAD was text/html
+            if ct_type and "text/html" in ct_type:
+                is_html = True
+            if is_html:
+                fp.unlink(missing_ok=True)
+                return False, f"Got HTML page instead of file ({human_size(sz)}). The URL may require a browser to download. Try copying the direct download link."
             downloads[tid].update({
                 "status": "completed", "file_size": sz, "downloaded": sz, "percent": 100.0,
                 "download_url": f"{SERVER_URL}/files/{filename}",
@@ -231,6 +243,16 @@ async def dl_aria2c(tid, url, headers, filename, conns, resume=False):
 
         if proc.returncode == 0 and fp.exists():
             sz = fp.stat().st_size
+            # Check if we got HTML instead of actual file
+            if sz < 100_000:
+                try:
+                    c = fp.read_text(errors="ignore")[:2000]
+                    cl = c.lower()
+                    if any(tag in cl for tag in ["<html", "<!doctype", "<head>", "<body", "403 forbidden", "404 not found", "access denied"]):
+                        fp.unlink(missing_ok=True)
+                        return False, f"Got HTML page instead of file ({human_size(sz)}). The URL may require a browser to download."
+                except:
+                    pass
             downloads[tid].update({
                 "status": "completed", "file_size": sz, "downloaded": sz, "percent": 100.0,
                 "download_url": f"{SERVER_URL}/files/{filename}",
