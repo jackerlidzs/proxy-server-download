@@ -286,6 +286,40 @@
             gap: 16px;
         }
 
+        .form-row-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 16px;
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+
+        .engine-badge {
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .engine-curl { background: rgba(6, 182, 212, 0.15); color: #06b6d4; }
+        .engine-aria2c { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+
         .form-hint {
             font-size: 12px;
             color: var(--text-muted);
@@ -748,10 +782,18 @@
                     <label class="form-label">Download URL</label>
                     <input type="text" id="dlUrl" class="form-input" placeholder="https://example.com/file.zip">
                 </div>
-                <div class="form-row">
+                <div class="form-row-3">
                     <div class="form-group">
                         <label class="form-label">Filename (optional)</label>
                         <input type="text" id="dlFilename" class="form-input" placeholder="Auto-detect from URL">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Engine</label>
+                        <select id="dlEngine" class="form-select">
+                            <option value="auto">🔄 Auto (try curl → aria2c)</option>
+                            <option value="curl">🛡️ curl-impersonate (CF bypass)</option>
+                            <option value="aria2c">⚡ aria2c (fast, multi-conn)</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Connections</label>
@@ -779,9 +821,19 @@
   -H 'user-agent: Mozilla/5.0 ...'"></textarea>
                     <div class="form-hint">Copy from Chrome DevTools → Network → Right-click request → Copy as cURL</div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Filename (optional)</label>
-                    <input type="text" id="dlCurlFilename" class="form-input" placeholder="Auto-detect from URL">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Filename (optional)</label>
+                        <input type="text" id="dlCurlFilename" class="form-input" placeholder="Auto-detect from URL">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Engine</label>
+                        <select id="dlCurlEngine" class="form-select">
+                            <option value="auto">🔄 Auto (try curl → aria2c)</option>
+                            <option value="curl">🛡️ curl-impersonate (CF bypass)</option>
+                            <option value="aria2c">⚡ aria2c (fast, multi-conn)</option>
+                        </select>
+                    </div>
                 </div>
                 <button class="btn btn-primary" onclick="submitDownloadCurl()" id="btnSubmitCurl">
                     ⬇️ Start Download
@@ -947,13 +999,14 @@
 
         const filename = document.getElementById('dlFilename').value.trim() || undefined;
         const connections = parseInt(document.getElementById('dlConnections').value) || undefined;
+        const engine = document.getElementById('dlEngine').value;
 
         const btn = document.getElementById('btnSubmitUrl');
         btn.disabled = true;
         btn.innerHTML = '<div class="spinner"></div> Submitting...';
 
         try {
-            const data = await api('POST', '/api/download', { url, headers, filename, connections });
+            const data = await api('POST', '/api/download', { url, headers, filename, connections, engine });
             showToast(`Download started: ${data.filename}`, 'success');
             // Clear form
             document.getElementById('dlUrl').value = '';
@@ -974,6 +1027,7 @@
         if (!curlCmd) { showToast('Please paste a cURL command', 'error'); return; }
 
         const filename = document.getElementById('dlCurlFilename').value.trim() || undefined;
+        const engine = document.getElementById('dlCurlEngine').value;
 
         const btn = document.getElementById('btnSubmitCurl');
         btn.disabled = true;
@@ -983,7 +1037,8 @@
             const data = await api('POST', '/api/download', {
                 url: 'placeholder',
                 curl_command: curlCmd,
-                filename
+                filename,
+                engine
             });
             showToast(`Download started: ${data.filename}`, 'success');
             document.getElementById('dlCurl').value = '';

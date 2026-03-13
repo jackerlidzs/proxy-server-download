@@ -1,6 +1,6 @@
 """
 Download Proxy Server - FastAPI Service
-Downloads files using aria2c and serves them via Nginx
+Downloads files using curl-impersonate (bypass Cloudflare) or aria2c (fast multi-connection)
 """
 
 import os
@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse, unquote, quote
 
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,8 +38,9 @@ class DownloadRequest(BaseModel):
     url: str
     headers: Optional[dict] = None
     filename: Optional[str] = None
-    connections: Optional[int] = None  # override MAX_CONNECTIONS per request
-    curl_command: Optional[str] = None  # paste raw curl command
+    connections: Optional[int] = None
+    curl_command: Optional[str] = None
+    engine: Optional[str] = "auto"  # "auto", "curl", "aria2c"
 
 
 class DownloadStatus(BaseModel):
@@ -49,6 +51,7 @@ class DownloadStatus(BaseModel):
     download_url: Optional[str] = None
     progress: Optional[str] = None
     error: Optional[str] = None
+    engine: Optional[str] = None
     created_at: str
     completed_at: Optional[str] = None
 
@@ -56,14 +59,21 @@ class DownloadStatus(BaseModel):
 # --- Helpers ---
 def parse_curl_command(curl_cmd: str) -> tuple[str, dict]:
     """Parse a curl command string and extract URL + headers."""
-    parts = shlex.split(curl_cmd.replace("\\\n", " "))
+    # Handle Windows \r\n and bash \ line continuations
+    cleaned = curl_cmd.replace("\r\n", "\n").replace("\\\n", " ")
+    try:
+        parts = shlex.split(cleaned)
+    except ValueError:
+        # If shlex fails, try basic parsing
+        parts = cleaned.split()
+
     url = ""
     headers = {}
 
     i = 0
     while i < len(parts):
         part = parts[i]
-        if part == "curl":
+        if part in ("curl", "curl.exe", "curl_chrome", "curl-impersonate-chrome"):
             i += 1
             continue
         elif part in ("-H", "--header"):
@@ -72,15 +82,21 @@ def parse_curl_command(curl_cmd: str) -> tuple[str, dict]:
                 header_str = parts[i]
                 if ": " in header_str:
                     key, val = header_str.split(": ", 1)
-                    # Skip browser-internal headers
                     if not key.lower().startswith(("sec-ch-ua", "sec-fetch", "priority")):
-                        headers[key] = val
+                        headers[key.lower()] = val
                 elif ":" in header_str:
                     key, val = header_str.split(":", 1)
                     if not key.lower().startswith(("sec-ch-ua", "sec-fetch", "priority")):
-                        headers[key] = val.strip()
-        elif part in ("-X", "--request"):
-            i += 1  # skip method
+                        headers[key.lower()] = val.strip()
+        elif part in ("-b", "--cookie"):
+            i += 1
+            if i < len(parts):
+                headers["cookie"] = parts[i]
+        elif part in ("-X", "--request", "-o", "--output"):
+            i += 1  # skip next arg
+        elif part in ("-L", "--location", "-k", "--insecure", "-s", "--silent",
+                       "-S", "--show-error", "-v", "--verbose", "--compressed"):
+            pass  # skip boolean flags
         elif not part.startswith("-") and not url:
             url = part.strip("'\"")
         i += 1
@@ -90,12 +106,20 @@ def parse_curl_command(curl_cmd: str) -> tuple[str, dict]:
 
 def get_filename_from_url(url: str) -> str:
     """Extract filename from URL."""
-    from urllib.parse import urlparse, unquote
     path = urlparse(url).path
     filename = unquote(path.split("/")[-1])
-    if not filename:
+    if not filename or filename == "/":
         filename = f"download_{uuid.uuid4().hex[:8]}"
     return filename
+
+
+def sanitize_filename(filename: str) -> str:
+    """Clean filename of problematic characters."""
+    filename = filename.strip().rstrip("^").strip()
+    filename = filename.replace("/", "_").replace("\\", "_").replace("..", "_")
+    # Remove any control characters
+    filename = "".join(c for c in filename if c.isprintable() and c not in '<>:"|?*')
+    return filename or f"download_{uuid.uuid4().hex[:8]}"
 
 
 def generate_task_id() -> str:
@@ -125,122 +149,202 @@ async def cleanup_old_files():
                         mtime = datetime.fromtimestamp(f.stat().st_mtime)
                         if mtime < cutoff:
                             f.unlink()
-                            # Remove from downloads dict
-                            to_remove = []
-                            for tid, info in downloads.items():
-                                if info.get("filename") == f.name:
-                                    to_remove.append(tid)
+                            to_remove = [tid for tid, info in downloads.items()
+                                         if info.get("filename") == f.name]
                             for tid in to_remove:
                                 del downloads[tid]
         except Exception as e:
             print(f"Cleanup error: {e}")
-        await asyncio.sleep(3600)  # Run every hour
+        await asyncio.sleep(3600)
 
 
-async def run_download(task_id: str, url: str, headers: dict, filename: str, connections: int):
-    """Download file using aria2c."""
+# --- Download Engines ---
+
+async def download_with_curl_impersonate(task_id: str, url: str, headers: dict, filename: str):
+    """Download using curl-impersonate (bypasses Cloudflare)."""
+    filepath = DOWNLOAD_DIR / filename
+
+    # Build curl-impersonate command
+    cmd = [
+        "curl_chrome",
+        "-L",                    # follow redirects
+        "-s", "-S",              # silent but show errors
+        "--max-redirs", "10",
+        "--retry", "3",
+        "--retry-delay", "3",
+        "--connect-timeout", "30",
+        "--max-time", "3600",    # 1 hour max
+        "-o", str(filepath),
+        "-w", "%{http_code}|%{size_download}|%{speed_download}",
+    ]
+
+    # Add custom headers
+    for key, val in headers.items():
+        cmd.extend(["-H", f"{key}: {val}"])
+
+    cmd.append(url)
+
+    cmd_display = " ".join(f'"{c}"' if " " in c else c for c in cmd[:8])
+    print(f"[Download {task_id}] ENGINE=curl_chrome CMD: {cmd_display}... URL: {url[:100]}")
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await process.communicate()
+
+        stdout_text = stdout.decode("utf-8", errors="ignore").strip()
+        stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+
+        print(f"[Download {task_id}] curl exit={process.returncode} stdout={stdout_text} stderr={stderr_text[:200]}")
+
+        if process.returncode == 0 and filepath.exists():
+            file_size = filepath.stat().st_size
+
+            # Parse the -w output: http_code|size|speed
+            parts = stdout_text.split("|")
+            http_code = parts[0] if parts else "unknown"
+
+            # Check if we got an error page instead of a file
+            if file_size < 1000 and http_code.startswith(("4", "5")):
+                content_preview = filepath.read_bytes()[:200].decode("utf-8", errors="ignore")
+                filepath.unlink()
+                return False, f"HTTP {http_code}: {content_preview[:100]}"
+
+            if http_code.startswith(("4", "5")):
+                # Got error response but file is large - might be error page
+                filepath.unlink()
+                return False, f"HTTP {http_code}"
+
+            downloads[task_id].update({
+                "status": "completed",
+                "file_size": file_size,
+                "download_url": f"{SERVER_URL}/files/{filename}",
+                "completed_at": datetime.now().isoformat(),
+                "progress": "100%",
+            })
+            return True, None
+        else:
+            error = stderr_text or stdout_text or f"curl exit code: {process.returncode}"
+            return False, error
+
+    except FileNotFoundError:
+        return False, "curl_chrome not found. Install curl-impersonate."
+    except Exception as e:
+        return False, str(e)
+
+
+async def download_with_aria2c(task_id: str, url: str, headers: dict, filename: str, connections: int):
+    """Download using aria2c (fast multi-connection, no CF bypass)."""
+    filepath = DOWNLOAD_DIR / filename
+
+    cmd = [
+        "aria2c",
+        "-x", str(connections),
+        "-s", str(connections),
+        "-k", "1M",
+        "-m", "5",
+        "--retry-wait=3",
+        "-t", "60",
+        "--connect-timeout=30",
+        "-c",
+        "--auto-file-renaming=false",
+        "--allow-overwrite=true",
+        "-d", str(DOWNLOAD_DIR),
+        "-o", filename,
+        "--console-log-level=info",
+        "--summary-interval=3",
+        "--file-allocation=none",
+    ]
+
+    for key, val in headers.items():
+        cmd.extend(["--header", f"{key}: {val}"])
+
+    cmd.append(url)
+
+    print(f"[Download {task_id}] ENGINE=aria2c URL: {url[:100]}")
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        output_lines = []
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            decoded = line.decode("utf-8", errors="ignore").strip()
+            if decoded:
+                output_lines.append(decoded)
+                print(f"[Download {task_id}] {decoded}")
+                if "%" in decoded or "DL:" in decoded:
+                    downloads[task_id]["progress"] = decoded
+
+        await process.wait()
+
+        if process.returncode == 0 and filepath.exists():
+            file_size = filepath.stat().st_size
+            downloads[task_id].update({
+                "status": "completed",
+                "file_size": file_size,
+                "download_url": f"{SERVER_URL}/files/{filename}",
+                "completed_at": datetime.now().isoformat(),
+                "progress": "100%",
+            })
+            return True, None
+        else:
+            error_lines = [l for l in output_lines if l and "see the log" not in l.lower()]
+            error_detail = " | ".join(error_lines[-5:]) if error_lines else "Unknown error"
+            return False, f"aria2c exit={process.returncode}. {error_detail}"
+
+    except FileNotFoundError:
+        return False, "aria2c not found."
+    except Exception as e:
+        return False, str(e)
+
+
+async def run_download(task_id: str, url: str, headers: dict, filename: str,
+                       connections: int, engine: str = "auto"):
+    """Main download orchestrator."""
     async with download_semaphore:
-        # Clean filename of any problematic characters
-        filename = filename.strip().rstrip("^").strip()
-        filepath = DOWNLOAD_DIR / filename
-        log_file = DOWNLOAD_DIR / f".{task_id}.log"
+        filename = sanitize_filename(filename)
         downloads[task_id]["status"] = "downloading"
         downloads[task_id]["filename"] = filename
 
-        # Build aria2c command
-        cmd = [
-            "aria2c",
-            "-x", str(connections),
-            "-s", str(connections),
-            "-k", "1M",
-            "-m", "5",
-            "--retry-wait=3",
-            "-t", "60",
-            "--connect-timeout=30",
-            "-c",
-            "--auto-file-renaming=false",
-            "--allow-overwrite=true",
-            "-d", str(DOWNLOAD_DIR),
-            "-o", filename,
-            "-l", str(log_file),
-            "--log-level=info",
-            "--console-log-level=info",
-            "--summary-interval=3",
-            "--file-allocation=none",
-        ]
+        success = False
+        error = None
 
-        # Add custom headers
-        for key, val in headers.items():
-            cmd.extend(["--header", f"{key}: {val}"])
+        if engine == "aria2c":
+            # Force aria2c
+            downloads[task_id]["engine"] = "aria2c"
+            success, error = await download_with_aria2c(task_id, url, headers, filename, connections)
 
-        # URL must be the last argument
-        cmd.append(url)
+        elif engine == "curl":
+            # Force curl-impersonate
+            downloads[task_id]["engine"] = "curl_chrome"
+            success, error = await download_with_curl_impersonate(task_id, url, headers, filename)
 
-        # Log full command for debugging
-        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
-        print(f"[Download {task_id}] CMD: {cmd_str}")
+        else:
+            # Auto mode: try curl-impersonate first, fallback to aria2c
+            downloads[task_id]["engine"] = "curl_chrome"
+            success, error = await download_with_curl_impersonate(task_id, url, headers, filename)
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
+            if not success and error and "not found" in error.lower():
+                # curl-impersonate not installed, try aria2c
+                print(f"[Download {task_id}] curl_chrome not available, falling back to aria2c")
+                downloads[task_id]["engine"] = "aria2c"
+                success, error = await download_with_aria2c(task_id, url, headers, filename, connections)
 
-            # Capture ALL output lines for error reporting
-            output_lines = []
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                decoded = line.decode("utf-8", errors="ignore").strip()
-                if decoded:
-                    output_lines.append(decoded)
-                    print(f"[Download {task_id}] {decoded}")
-                    # Parse progress from aria2c output
-                    if "%" in decoded or "DL:" in decoded:
-                        downloads[task_id]["progress"] = decoded
-
-            await process.wait()
-
-            if process.returncode == 0 and filepath.exists():
-                file_size = filepath.stat().st_size
-                downloads[task_id].update({
-                    "status": "completed",
-                    "file_size": file_size,
-                    "download_url": f"{SERVER_URL}/files/{filename}",
-                    "completed_at": datetime.now().isoformat(),
-                    "progress": "100%",
-                })
-                # Clean up log file on success
-                if log_file.exists():
-                    log_file.unlink()
-            else:
-                # Get the most useful error lines (skip empty/generic ones)
-                error_lines = [l for l in output_lines if l and "see the log" not in l.lower()]
-                error_detail = " | ".join(error_lines[-5:]) if error_lines else "Unknown error"
-
-                # Also try to read log file for more details
-                log_content = ""
-                if log_file.exists():
-                    try:
-                        log_text = log_file.read_text(errors="ignore")
-                        # Find ERROR lines in log
-                        log_errors = [l.strip() for l in log_text.split("\n") if "ERR" in l or "error" in l.lower()]
-                        if log_errors:
-                            log_content = " | LOG: " + " | ".join(log_errors[-3:])
-                    except Exception:
-                        pass
-
-                downloads[task_id].update({
-                    "status": "failed",
-                    "error": f"exit={process.returncode}. {error_detail}{log_content}",
-                })
-
-        except Exception as e:
+        if not success:
             downloads[task_id].update({
                 "status": "failed",
-                "error": str(e),
+                "error": error or "Unknown error",
             })
 
 
@@ -257,8 +361,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Download Proxy Server",
-    description="Download files and serve them for fast re-downloading",
-    version="1.0.0",
+    description="Download files using curl-impersonate (Cloudflare bypass) or aria2c",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -269,6 +373,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Serve Web UI
 @app.get("/", include_in_schema=False)
 async def serve_ui():
@@ -277,7 +382,13 @@ async def serve_ui():
 
 @app.post("/api/download", response_model=DownloadStatus)
 async def create_download(req: DownloadRequest, _=Depends(verify_api_key)):
-    """Submit a new download task."""
+    """Submit a new download task.
+
+    Engine options:
+    - `auto` (default): try curl-impersonate first, fallback to aria2c
+    - `curl`: force curl-impersonate (bypasses Cloudflare)
+    - `aria2c`: force aria2c (faster, multi-connection, no CF bypass)
+    """
 
     url = req.url
     headers = req.headers or {}
@@ -285,18 +396,16 @@ async def create_download(req: DownloadRequest, _=Depends(verify_api_key)):
     # Parse curl command if provided
     if req.curl_command:
         url, parsed_headers = parse_curl_command(req.curl_command)
-        headers = {**parsed_headers, **headers}  # explicit headers override
+        headers = {**parsed_headers, **headers}
         if not url:
             raise HTTPException(400, "Could not parse URL from curl command")
 
     if not url:
         raise HTTPException(400, "URL is required")
 
-    # Determine filename
     filename = req.filename or get_filename_from_url(url)
-
-    # Sanitize filename
-    filename = filename.replace("/", "_").replace("\\", "_").replace("..", "_")
+    filename = sanitize_filename(filename)
+    engine = req.engine or "auto"
 
     task_id = generate_task_id()
     connections = req.connections or MAX_CONNECTIONS
@@ -306,53 +415,17 @@ async def create_download(req: DownloadRequest, _=Depends(verify_api_key)):
         "status": "queued",
         "filename": filename,
         "url": url,
+        "engine": engine,
         "created_at": datetime.now().isoformat(),
     }
 
-    # Start download in background
-    asyncio.create_task(run_download(task_id, url, headers, filename, connections))
+    asyncio.create_task(run_download(task_id, url, headers, filename, connections, engine))
 
     return DownloadStatus(
         task_id=task_id,
         status="queued",
         filename=filename,
-        created_at=downloads[task_id]["created_at"],
-    )
-
-
-@app.post("/api/download/curl", response_model=DownloadStatus)
-async def create_download_from_curl(
-    _=Depends(verify_api_key),
-    curl_command: str = "",
-    filename: Optional[str] = None,
-):
-    """Submit download by pasting raw curl command in body."""
-    if not curl_command:
-        raise HTTPException(400, "curl_command is required")
-
-    url, headers = parse_curl_command(curl_command)
-    if not url:
-        raise HTTPException(400, "Could not parse URL from curl command")
-
-    fname = filename or get_filename_from_url(url)
-    fname = fname.replace("/", "_").replace("\\", "_").replace("..", "_")
-
-    task_id = generate_task_id()
-
-    downloads[task_id] = {
-        "task_id": task_id,
-        "status": "queued",
-        "filename": fname,
-        "url": url,
-        "created_at": datetime.now().isoformat(),
-    }
-
-    asyncio.create_task(run_download(task_id, url, headers, fname, MAX_CONNECTIONS))
-
-    return DownloadStatus(
-        task_id=task_id,
-        status="queued",
-        filename=fname,
+        engine=engine,
         created_at=downloads[task_id]["created_at"],
     )
 
@@ -372,6 +445,7 @@ async def get_status(task_id: str, _=Depends(verify_api_key)):
         download_url=info.get("download_url"),
         progress=info.get("progress"),
         error=info.get("error"),
+        engine=info.get("engine"),
         created_at=info.get("created_at", ""),
         completed_at=info.get("completed_at"),
     )
@@ -419,8 +493,16 @@ async def health():
     """Health check."""
     disk = os.statvfs(str(DOWNLOAD_DIR)) if hasattr(os, 'statvfs') else None
     free_gb = (disk.f_bavail * disk.f_frsize / (1024**3)) if disk else None
+
+    # Check which engines are available
+    engines = {}
+    import shutil
+    engines["curl_chrome"] = shutil.which("curl_chrome") is not None
+    engines["aria2c"] = shutil.which("aria2c") is not None
+
     return {
         "status": "ok",
+        "engines": engines,
         "downloads_active": sum(1 for d in downloads.values() if d["status"] == "downloading"),
         "downloads_queued": sum(1 for d in downloads.values() if d["status"] == "queued"),
         "files_count": sum(1 for f in DOWNLOAD_DIR.iterdir() if f.is_file()) if DOWNLOAD_DIR.exists() else 0,
