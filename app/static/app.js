@@ -297,7 +297,7 @@ async function delF(path){
 // Extract
 let _extPollId=null;
 async function extractF(path){
-  const name=path.split('/').pop().toLowerCase();
+  const name=path.split('/').pop();
   const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
   let extractPath=path;
   if(partMatch){
