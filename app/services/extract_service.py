@@ -1,10 +1,12 @@
 """
 Extract Service - archive extraction and compression
 Supports: .rar (multi-part), .zip, .7z, .tar.gz
+With progress tracking, cancel, ETA, and speed
 """
 import re
 import uuid
 import asyncio
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -13,8 +15,9 @@ from config import DOWNLOAD_DIR, MAX_CONCURRENT_EXTRACT
 extract_semaphore: asyncio.Semaphore = None
 RAR_PATTERN = re.compile(r'^(.+?)\.part(\d+)\.rar$', re.IGNORECASE)
 
-# Separate tracker for extract tasks (not in downloads)
+# Task tracker and subprocess refs for cancel
 extract_tasks: dict = {}
+_extract_procs: dict = {}  # eid -> subprocess for cancel
 
 
 def init_extract_semaphore():
@@ -25,6 +28,46 @@ def init_extract_semaphore():
 def part_group(fn: str):
     m = RAR_PATTERN.match(fn)
     return (m.group(1), int(m.group(2))) if m else ("", 0)
+
+
+def human_size(b):
+    if not b:
+        return "0 B"
+    b = float(b)
+    for u in ["B", "KB", "MB", "GB", "TB"]:
+        if b < 1024:
+            return f"{b:.1f} {u}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
+def fmt_time(secs):
+    """Format seconds into human-readable string."""
+    if secs < 0 or secs > 86400:
+        return "--:--"
+    m, s = divmod(int(secs), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def _calc_eta(task):
+    """Calculate speed and ETA based on progress and elapsed time."""
+    pct = task.get("percent", 0)
+    started = task.get("_started_ts", 0)
+    if not started or pct <= 0:
+        return
+    elapsed = time.time() - started
+    task["elapsed"] = fmt_time(elapsed)
+    if pct > 0:
+        eta_secs = (elapsed / pct) * (100 - pct)
+        task["eta"] = fmt_time(eta_secs)
+    total_bytes = task.get("total_size", 0)
+    if total_bytes > 0 and elapsed > 0:
+        processed = total_bytes * (pct / 100)
+        speed = processed / elapsed
+        task["speed"] = human_size(speed) + "/s"
 
 
 def check_parts(filename: str, directory: Path) -> dict:
@@ -59,9 +102,33 @@ def check_parts(filename: str, directory: Path) -> dict:
     }
 
 
+def cancel_extract(eid: str):
+    """Cancel extraction by killing subprocess."""
+    if eid in extract_tasks:
+        extract_tasks[eid].update({"status": "cancelled", "speed": "", "eta": ""})
+    proc = _extract_procs.pop(eid, None)
+    if proc and proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _get_archive_size(fp: Path, group: str) -> int:
+    """Get total archive size (sum of all parts for multipart)."""
+    if group:
+        total = 0
+        for f in fp.parent.iterdir():
+            g, _ = part_group(f.name)
+            if g == group and f.name.lower().endswith('.rar'):
+                total += f.stat().st_size
+        return total
+    return fp.stat().st_size if fp.exists() else 0
+
+
 async def extract_archive(filename: str, delete_after: bool = False,
                            base_dir: Path = None, destination: str = None) -> dict:
-    """Extract an archive file. Extracts to subfolder by default (filebrowser-style)."""
+    """Extract an archive file. Extracts to subfolder by default."""
     base_dir = base_dir or DOWNLOAD_DIR
     fp = base_dir / filename
 
@@ -86,7 +153,6 @@ async def extract_archive(filename: str, delete_after: bool = False,
                     "total_parts": parts_info.get("total_parts", 0)
                 }
             group = parts_info.get("group", "")
-            # Use part1.rar for extraction
             g, p = part_group(fp.name)
             if g and p != 1:
                 part1 = fp.parent / f"{g}.part1.rar"
@@ -94,37 +160,37 @@ async def extract_archive(filename: str, delete_after: bool = False,
                     fp = part1
                     filename = str(part1.relative_to(base_dir))
 
-    # Determine output directory (filebrowser-style: extract to subfolder)
+    # Determine output directory
     if destination:
         out_dir = base_dir / destination
     else:
-        # Create subfolder based on archive name (strip extensions)
         stem = fp.stem
-        # Handle .tar.gz, .tar.bz2 etc.
         if stem.lower().endswith('.tar'):
             stem = stem[:-4]
-        # For multi-part RAR, use the group name
         if group:
             stem = group
-        # Handle .partN suffix for RAR
         part_m = re.match(r'^(.+?)\.part\d+$', stem, re.IGNORECASE)
         if part_m:
             stem = part_m.group(1)
         out_dir = fp.parent / stem
-        # If a file with same name exists, add suffix
         if out_dir.exists() and out_dir.is_file():
             out_dir = fp.parent / f"{stem}_extracted"
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Calculate total archive size for ETA
+    total_size = _get_archive_size(fp, group)
+
     extract_tasks[eid] = {
         "task_id": eid, "status": "extracting", "filename": fp.name,
         "group": group, "progress": "Starting...", "percent": 0,
         "destination": str(out_dir.relative_to(base_dir)),
+        "total_size": total_size,
+        "speed": "", "eta": "", "elapsed": "",
+        "_started_ts": time.time(),
         "created_at": datetime.now().isoformat()
     }
 
-    # Run extraction in background
     asyncio.create_task(_run_extract(fp, ext, name_lower, out_dir, eid, group, delete_after))
 
     return {"success": True, "task_id": eid, "message": f"Extracting to {out_dir.name}/",
@@ -137,145 +203,261 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
     async with extract_semaphore:
         try:
             if ext == ".rar" or name_lower.endswith(".rar"):
-                result = await _extract_rar(fp, base_dir, eid, extract_tasks)
+                result = await _extract_rar(fp, base_dir, eid)
             elif ext == ".zip":
-                result = await _extract_zip(fp, base_dir, eid, extract_tasks)
+                result = await _extract_zip(fp, base_dir, eid)
             elif ext == ".7z":
-                result = await _extract_7z(fp, base_dir, eid, extract_tasks)
+                result = await _extract_7z(fp, base_dir, eid)
             elif name_lower.endswith((".tar.gz", ".tgz")):
-                result = await _extract_tar(fp, base_dir, eid, extract_tasks)
+                result = await _extract_tar(fp, base_dir, eid)
             elif ext == ".tar":
-                result = await _extract_tar(fp, base_dir, eid, extract_tasks)
+                result = await _extract_tar(fp, base_dir, eid)
             elif ext == ".gz":
-                result = await _extract_tar(fp, base_dir, eid, extract_tasks)
+                result = await _extract_tar(fp, base_dir, eid)
             else:
-                extract_tasks[eid].update({"status": "failed", "error": f"Unsupported format: {ext}"})
+                extract_tasks[eid].update({"status": "failed", "error": f"Unsupported: {ext}"})
                 return
 
             if result and delete_after:
+                extract_tasks[eid]["progress"] = "Cleaning up archives..."
                 await _cleanup_archives(fp, group, base_dir)
 
         except Exception as e:
-            extract_tasks[eid].update({"status": "failed", "error": str(e)})
+            if extract_tasks.get(eid, {}).get("status") != "cancelled":
+                extract_tasks[eid].update({"status": "failed", "error": str(e)})
 
 
-async def _extract_rar(fp: Path, out_dir: Path, eid: str, downloads_dict: dict) -> bool:
+async def _extract_rar(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
             "unrar", "x", "-o+", "-y", str(fp), str(out_dir) + "/",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
         )
-        lines = []
+        _extract_procs[eid] = proc
         while True:
             line = await proc.stdout.readline()
             if not line:
                 break
             dec = line.decode("utf-8", errors="ignore").strip()
             if dec:
-                lines.append(dec)
                 m = re.search(r'(\d+)%', dec)
                 if m:
-                    downloads_dict[eid]["percent"] = float(m.group(1))
-                    downloads_dict[eid]["progress"] = f"{m.group(1)}%"
+                    pct = float(m.group(1))
+                    extract_tasks[eid]["percent"] = pct
+                    _calc_eta(extract_tasks[eid])
+                    eta = extract_tasks[eid].get("eta", "")
+                    spd = extract_tasks[eid].get("speed", "")
+                    parts = [f"{pct:.0f}%"]
+                    if spd:
+                        parts.append(spd)
+                    if eta:
+                        parts.append(f"ETA {eta}")
+                    extract_tasks[eid]["progress"] = " · ".join(parts)
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                proc.kill()
+                break
         await proc.wait()
+        _extract_procs.pop(eid, None)
+
+        if extract_tasks.get(eid, {}).get("status") == "cancelled":
+            return False
 
         if proc.returncode == 0:
-            downloads_dict[eid].update({
-                "status": "completed", "percent": 100, "progress": "100%",
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
+                "speed": "", "eta": "",
                 "completed_at": datetime.now().isoformat()
             })
             return True
         else:
-            downloads_dict[eid].update({"status": "failed", "error": "\n".join(lines[-5:])})
+            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
-        downloads_dict[eid].update({"status": "failed", "error": "unrar not found"})
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "unrar not found"})
         return False
 
 
-async def _extract_zip(fp: Path, out_dir: Path, eid: str, downloads_dict: dict) -> bool:
+async def _extract_zip(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
+        # Count total files in archive for progress
+        total_files = 0
+        try:
+            lp = await asyncio.create_subprocess_exec(
+                "unzip", "-l", str(fp),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            out, _ = await asyncio.wait_for(lp.communicate(), timeout=30)
+            for line in out.decode(errors="ignore").split("\n"):
+                line = line.strip()
+                if line and not line.startswith("---") and not line.startswith("Archive") and not line.startswith("Length"):
+                    m = re.match(r'^\s*\d+', line)
+                    if m:
+                        total_files += 1
+        except Exception:
+            pass
+
         proc = await asyncio.create_subprocess_exec(
             "unzip", "-o", str(fp), "-d", str(out_dir),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
         )
-        downloads_dict[eid].update({"percent": 50, "progress": "Extracting..."})
-        output, _ = await proc.communicate()
+        _extract_procs[eid] = proc
+        extracted = 0
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            dec = line.decode("utf-8", errors="ignore").strip()
+            if dec and ("inflating:" in dec or "extracting:" in dec):
+                extracted += 1
+                if total_files > 0:
+                    pct = min(99, extracted / total_files * 100)
+                    extract_tasks[eid]["percent"] = pct
+                    _calc_eta(extract_tasks[eid])
+                    eta = extract_tasks[eid].get("eta", "")
+                    spd = extract_tasks[eid].get("speed", "")
+                    parts = [f"{pct:.0f}%", f"{extracted}/{total_files} files"]
+                    if spd:
+                        parts.append(spd)
+                    if eta:
+                        parts.append(f"ETA {eta}")
+                    extract_tasks[eid]["progress"] = " · ".join(parts)
+                else:
+                    extract_tasks[eid]["progress"] = f"{extracted} files extracted"
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                proc.kill()
+                break
+        await proc.wait()
+        _extract_procs.pop(eid, None)
+
+        if extract_tasks.get(eid, {}).get("status") == "cancelled":
+            return False
 
         if proc.returncode == 0:
-            downloads_dict[eid].update({
-                "status": "completed", "percent": 100, "progress": "100%",
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · {extracted} files · Done in {elapsed}" if elapsed else f"100% · {extracted} files",
+                "speed": "", "eta": "",
                 "completed_at": datetime.now().isoformat()
             })
             return True
         else:
-            downloads_dict[eid].update({
-                "status": "failed",
-                "error": output.decode(errors="ignore")[-200:]
-            })
+            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
-        downloads_dict[eid].update({"status": "failed", "error": "unzip not found"})
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "unzip not found"})
         return False
 
 
-async def _extract_7z(fp: Path, out_dir: Path, eid: str, downloads_dict: dict) -> bool:
+async def _extract_7z(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
             "7z", "x", "-y", f"-o{out_dir}", str(fp),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
         )
-        lines = []
+        _extract_procs[eid] = proc
         while True:
             line = await proc.stdout.readline()
             if not line:
                 break
             dec = line.decode("utf-8", errors="ignore").strip()
             if dec:
-                lines.append(dec)
                 m = re.search(r'(\d+)%', dec)
                 if m:
-                    downloads_dict[eid]["percent"] = float(m.group(1))
-                    downloads_dict[eid]["progress"] = f"{m.group(1)}%"
+                    pct = float(m.group(1))
+                    extract_tasks[eid]["percent"] = pct
+                    _calc_eta(extract_tasks[eid])
+                    eta = extract_tasks[eid].get("eta", "")
+                    spd = extract_tasks[eid].get("speed", "")
+                    parts = [f"{pct:.0f}%"]
+                    if spd:
+                        parts.append(spd)
+                    if eta:
+                        parts.append(f"ETA {eta}")
+                    extract_tasks[eid]["progress"] = " · ".join(parts)
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                proc.kill()
+                break
         await proc.wait()
+        _extract_procs.pop(eid, None)
+
+        if extract_tasks.get(eid, {}).get("status") == "cancelled":
+            return False
 
         if proc.returncode == 0:
-            downloads_dict[eid].update({
-                "status": "completed", "percent": 100, "progress": "100%",
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
+                "speed": "", "eta": "",
                 "completed_at": datetime.now().isoformat()
             })
             return True
         else:
-            downloads_dict[eid].update({"status": "failed", "error": "\n".join(lines[-5:])})
+            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
-        downloads_dict[eid].update({"status": "failed", "error": "7z not found"})
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "7z not found"})
         return False
 
 
-async def _extract_tar(fp: Path, out_dir: Path, eid: str, downloads_dict: dict) -> bool:
+async def _extract_tar(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
-        cmd = ["tar", "-xf", str(fp), "-C", str(out_dir)]
+        # Use -v to track extracted files
+        cmd = ["tar", "-xvf", str(fp), "-C", str(out_dir)]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
         )
-        downloads_dict[eid].update({"percent": 50, "progress": "Extracting..."})
-        output, _ = await proc.communicate()
+        _extract_procs[eid] = proc
+        total_size = fp.stat().st_size if fp.exists() else 0
+        extracted_files = 0
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            dec = line.decode("utf-8", errors="ignore").strip()
+            if dec:
+                extracted_files += 1
+                # Estimate progress based on output dir size vs archive size
+                if total_size > 0 and extracted_files % 10 == 0:
+                    try:
+                        out_size = sum(f.stat().st_size for f in out_dir.rglob("*") if f.is_file())
+                        pct = min(95, out_size / total_size * 100)
+                        extract_tasks[eid]["percent"] = pct
+                        _calc_eta(extract_tasks[eid])
+                    except Exception:
+                        pass
+                eta = extract_tasks[eid].get("eta", "")
+                extract_tasks[eid]["progress"] = f"{extracted_files} files" + (f" · ETA {eta}" if eta else "")
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                proc.kill()
+                break
+        await proc.wait()
+        _extract_procs.pop(eid, None)
+
+        if extract_tasks.get(eid, {}).get("status") == "cancelled":
+            return False
 
         if proc.returncode == 0:
-            downloads_dict[eid].update({
-                "status": "completed", "percent": 100, "progress": "100%",
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · {extracted_files} files · Done in {elapsed}" if elapsed else f"100% · {extracted_files} files",
+                "speed": "", "eta": "",
                 "completed_at": datetime.now().isoformat()
             })
             return True
         else:
-            downloads_dict[eid].update({
-                "status": "failed",
-                "error": output.decode(errors="ignore")[-200:]
-            })
+            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
-        downloads_dict[eid].update({"status": "failed", "error": "tar not found"})
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "tar not found"})
         return False
 
 

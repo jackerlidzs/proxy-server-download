@@ -395,10 +395,13 @@ function startExtractPoll(){
           const el=document.getElementById('extractBanner');
           if(el)el.innerHTML='';
           rFiles();
-        },2000);
+        },3000);
       }
     }catch(e){clearInterval(_extPollId);_extPollId=null}
-  },2000);
+  },1500);
+}
+async function cancelExtract(eid){
+  try{await api('DELETE','/api/extract-tasks/'+eid);toast('Extraction cancelled','ok')}catch(e){toast(e.message,'err')}
 }
 function renderExtractBanner(tasks){
   let el=document.getElementById('extractBanner');
@@ -409,18 +412,29 @@ function renderExtractBanner(tasks){
   }
   if(!tasks||!tasks.length){el.innerHTML='';return}
   el.innerHTML=tasks.map(t=>{
-    const sc={extracting:'st-dl',completed:'st-ok',failed:'st-err'}[t.status]||'st-q';
-    const ic=t.status==='completed'?'✅':t.status==='failed'?'❌':'📦';
     const pct=t.percent||0;
-    const bar=t.status==='extracting'?`<div class="pb"><div class="pf" style="width:${pct}%"></div></div>`:'';
+    const isActive=t.status==='extracting';
+    const ic=t.status==='completed'?'✅':t.status==='failed'?'❌':t.status==='cancelled'?'⏹':'📦';
     const dest=t.destination?`→ 📁 ${esc(t.destination)}`:'';
-    return`<div style="background:var(--bg3);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;margin-bottom:6px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:12px;font-weight:600">${ic} ${esc(t.filename)}</span>
-        <span class="st ${sc}" style="font-size:11px">${t.status}</span>
+    const cancelBtn=isActive?`<button class="btn-d" onclick="cancelExtract('${t.task_id}')" style="font-size:10px;padding:2px 8px;margin-left:8px" title="Cancel">✕ Cancel</button>`:'';
+    // Status badge color
+    const sc=t.status==='completed'?'color:var(--grn)':t.status==='failed'?'color:var(--red)':t.status==='cancelled'?'color:var(--txt3)':'color:var(--pri2)';
+    // Progress info line
+    let infoLine=t.progress||'';
+    if(isActive&&t.elapsed)infoLine+=` · ⏱ ${t.elapsed}`;
+    // Progress bar
+    const bar=isActive||t.status==='cancelled'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;transition:width .3s;${isActive?'background:linear-gradient(90deg,var(--pri),#6a4ff0)':'background:var(--txt3)'};width:${pct}%"></div></div>`
+      :t.status==='completed'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;background:var(--grn);width:100%"></div></div>`:'';
+    return`<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:600">${ic} ${esc(t.filename)} ${dest}</span>
+        <div style="display:flex;align-items:center">
+          <span style="font-size:11px;font-weight:600;${sc}">${t.status}</span>
+          ${cancelBtn}
+        </div>
       </div>
       ${bar}
-      <div style="font-size:11px;color:var(--txt3);margin-top:2px">${t.progress||''} ${dest}</div>
+      <div style="font-size:11px;color:var(--txt3);margin-top:2px">${infoLine}</div>
     </div>`;
   }).join('');
 }

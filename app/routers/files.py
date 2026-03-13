@@ -17,7 +17,7 @@ from services.file_service import (
     create_version, list_versions, restore_version, index_file, file_type,
     copy_item, read_text_file, save_text_file
 )
-from services.extract_service import extract_archive, compress_files, check_parts
+from services.extract_service import extract_archive, compress_files, check_parts, cancel_extract
 from services.download_service import downloads, sanitize
 from services.dedup_service import scan_duplicates, clean_duplicates
 
@@ -235,15 +235,26 @@ async def extract_file(filename: str, request: Request, _=Depends(verify_key)):
 async def get_extract_tasks(_=Depends(verify_key)):
     """Get extract task progress (separate from downloads)."""
     from services.extract_service import extract_tasks
-    tasks = list(extract_tasks.values())
-    # Clean up completed tasks older than 5 minutes
+    # Filter out internal fields (prefixed with _)
+    tasks = [{k: v for k, v in t.items() if not k.startswith('_')} for t in extract_tasks.values()]
+    # Clean up old completed/failed/cancelled tasks
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
     to_remove = [k for k, v in extract_tasks.items()
-                 if v.get("status") in ("completed", "failed") and v.get("created_at", "") < cutoff]
+                 if v.get("status") in ("completed", "failed", "cancelled") and v.get("created_at", "") < cutoff]
     for k in to_remove:
         extract_tasks.pop(k, None)
     return {"tasks": tasks}
+
+
+@router.delete("/extract-tasks/{eid}")
+async def cancel_extract_task(eid: str, _=Depends(verify_key)):
+    """Cancel an active extraction."""
+    from services.extract_service import extract_tasks
+    if eid not in extract_tasks:
+        raise HTTPException(404, "Extract task not found")
+    cancel_extract(eid)
+    return {"message": f"Cancelled {eid}"}
 
 
 @router.post("/extract/check/{filename:path}")
