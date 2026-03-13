@@ -36,6 +36,31 @@
 <div style="display:flex;gap:8px"><button class="btn btn-p" style="flex:1" onclick="doRename()">Rename</button><button class="btn btn-s" style="flex:1" onclick="closeRename()">Cancel</button></div>
 </div></div>
 
+<!-- Preview/Editor Modal -->
+<div id="previewM" class="modal-bg" style="display:none" onclick="if(event.target===this)closePreview()">
+<div class="modal" style="max-width:900px;width:90vw;max-height:90vh;display:flex;flex-direction:column">
+<div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--border)">
+<h2 id="prevTitle" style="margin:0;font-size:16px">📄 Preview</h2>
+<div style="display:flex;gap:6px;align-items:center">
+<button class="btn btn-p" id="prevSaveBtn" style="display:none;font-size:12px;padding:4px 12px" onclick="savePreview()">💾 Save</button>
+<button class="btn btn-s" style="font-size:12px;padding:4px 10px" onclick="closePreview()">✕</button>
+</div>
+</div>
+<div id="prevBody" style="flex:1;overflow:auto;margin-top:8px;min-height:200px"></div>
+</div>
+</div>
+
+<!-- Context Menu -->
+<div id="ctxMenu" class="ctx-menu" style="display:none">
+<div class="ctx-item" onclick="ctxAction('open')">👁 Open/Preview</div>
+<div class="ctx-item" onclick="ctxAction('copy')">📋 Copy</div>
+<div class="ctx-item" onclick="ctxAction('rename')">✏️ Rename</div>
+<div class="ctx-item" onclick="ctxAction('share')">🔗 Share</div>
+<div class="ctx-item" onclick="ctxAction('download')">⬇️ Download</div>
+<div class="ctx-sep"></div>
+<div class="ctx-item ctx-danger" onclick="ctxAction('delete')">🗑 Delete</div>
+</div>
+
 <div class="tw" id="toasts"></div>
 
 <!-- Detail Panel (slide-in) -->

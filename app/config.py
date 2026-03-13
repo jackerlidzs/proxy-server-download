@@ -42,6 +42,15 @@ SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".vtt", ".sub"}
 AUDIO_EXTS = {".mp3", ".flac", ".aac", ".wav", ".ogg", ".m4a"}
 ARCHIVE_EXTS = {".rar", ".zip", ".7z", ".tar", ".gz", ".tar.gz", ".tgz"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"}
+TEXT_EXTS = {
+    ".txt", ".md", ".log", ".csv", ".json", ".xml", ".yaml", ".yml",
+    ".ini", ".cfg", ".conf", ".env", ".toml",
+    ".py", ".js", ".ts", ".html", ".css", ".jsx", ".tsx",
+    ".sh", ".bash", ".bat", ".ps1",
+    ".c", ".cpp", ".h", ".java", ".go", ".rs", ".rb", ".php",
+    ".sql", ".dockerfile", ".makefile", ".gitignore",
+    ".srt", ".vtt", ".ass", ".ssa", ".nfo",
+}
 
 # Hidden system directories
 SYSTEM_DIRS = {".trash", ".versions", ".hls"}

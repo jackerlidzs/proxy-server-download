@@ -2,6 +2,11 @@
 let K=localStorage.getItem('dp_key')||'',U=localStorage.getItem('dp_url')||'',poll=null,hasAct=false;
 let fmCurPath='',fmViewMode='grid',fmAllItems=[],fmSelected=new Set(),renameTarget='';
 let trashCount=0,currentUser=localStorage.getItem('dp_user')||'',currentRole=localStorage.getItem('dp_role')||'';
+let fmSort='name',fmSortDir=1,ctxTarget=null,previewPath='',previewDirty=false;
+const TEXT_EXTS=['.txt','.md','.log','.csv','.json','.xml','.yaml','.yml','.ini','.cfg','.conf','.env','.toml','.py','.js','.ts','.html','.css','.jsx','.tsx','.sh','.bash','.bat','.ps1','.c','.cpp','.h','.java','.go','.rs','.rb','.php','.sql','.srt','.vtt','.ass','.ssa','.nfo'];
+const IMG_EXTS=['.jpg','.jpeg','.png','.gif','.webp','.bmp','.svg'];
+const VID_EXTS=['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts'];
+const AUD_EXTS=['.mp3','.flac','.aac','.wav','.ogg','.m4a'];
 
 document.addEventListener('DOMContentLoaded',()=>{
   if(!K)showAuth();else init();
@@ -168,35 +173,59 @@ function renderFM(){
     parts.forEach((p,i)=>{acc+=(i?'/':'')+p;const a=acc;crumbs+=`<span class="fm-sep">›</span><span class="fm-crumb${i===parts.length-1?' current':''}" onclick="fmGo('${a}')">${esc(p)}</span>`});
   }
   pathEl.innerHTML=crumbs;
-  let items=fmAllItems;
+  let items=[...fmAllItems];
   const q=document.getElementById('fmSearch').value.toLowerCase();
   if(q)items=items.filter(f=>f.name.toLowerCase().includes(q));
+  // Sort
+  items.sort((a,b)=>{
+    if(a.type==='folder'&&b.type!=='folder')return -1;
+    if(a.type!=='folder'&&b.type==='folder')return 1;
+    let v=0;
+    if(fmSort==='name')v=a.name.localeCompare(b.name);
+    else if(fmSort==='size')v=(a.size||0)-(b.size||0);
+    else if(fmSort==='date')v=(a.modified||'').localeCompare(b.modified||'');
+    else if(fmSort==='type')v=(a.ext||'').localeCompare(b.ext||'');
+    return v*fmSortDir;
+  });
   const el=document.getElementById('fmContent');
   if(!items.length){el.innerHTML='<div class="empty"><span>📂</span>Empty folder</div>';return}
   const icons={folder:'📁',video:'🎬',audio:'🎵',subtitle:'🔤',archive:'📦',image:'🖼',file:'📄'};
   if(fmViewMode==='grid'){
     el.innerHTML='<div class="fm-grid">'+items.map(f=>{
       const ic=icons[f.type]||'📄';
-      const click=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`:f.download_url?`ondblclick="window.open('${f.download_url}')"`:'';
+      const ext=(f.ext||'').toLowerCase();
+      const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
+        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:
+        f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`:f.download_url?`ondblclick="window.open('${f.download_url}')"`:'';
       const archBtn=f.type==='archive'?`<button class="btn-o" style="position:absolute;bottom:4px;right:4px;font-size:9px;padding:2px 5px" onclick="event.stopPropagation();extractF('${esc(f.path)}')">📦</button>`:'';
-      return`<div class="fm-item" onclick="fmSel(this,'${esc(f.path)}')" ${click} data-path="${esc(f.path)}"><div class="fm-check">✓</div><span class="fm-icon">${ic}</span><div class="fm-fname">${esc(f.name)}</div><div class="fm-fsize">${f.size_human}${f.items!=null?' · '+f.items+' items':''}</div>${archBtn}</div>`;
+      // Image thumbnail
+      let thumb='';
+      if(IMG_EXTS.includes(ext)&&f.download_url)thumb=`<img class="fm-thumb" src="${f.download_url}" loading="lazy" onerror="this.style.display='none'">`;
+      return`<div class="fm-item" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-check">✓</div>${thumb||`<span class="fm-icon">${ic}</span>`}<div class="fm-fname">${esc(f.name)}</div><div class="fm-fsize">${f.size_human}${f.items!=null?' · '+f.items+' items':''}</div>${archBtn}</div>`;
     }).join('')+'</div>';
   }else{
-    el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div>Name</div><div>Size</div><div>Type</div><div></div></div>`+items.map(f=>{
+    const sa=k=>fmSort===k?(fmSortDir>0?'▲':'▼'):'';
+    el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div onclick="fmSetSort('name')" style="cursor:pointer">Name <span class="sort-arrow">${sa('name')}</span></div><div onclick="fmSetSort('size')" style="cursor:pointer">Size <span class="sort-arrow">${sa('size')}</span></div><div onclick="fmSetSort('type')" style="cursor:pointer">Type <span class="sort-arrow">${sa('type')}</span></div><div></div></div>`+items.map(f=>{
       const ic=icons[f.type]||'📄';
-      const click=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:''
+      const ext=(f.ext||'').toLowerCase();
+      const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
+        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:''
       let btns='';
       if(f.type!=='folder'){
-        btns+=`<button class="cp" onclick="event.stopPropagation();showDetail('${esc(f.path)}')" title="Info">ℹ️</button>`;
+        btns+=`<button class="cp" onclick="event.stopPropagation();openPreview('${esc(f.path)}')" title="Preview">👁</button>`;
         btns+=`<button class="cp" onclick="event.stopPropagation();showRename('${esc(f.path)}','${esc(f.name)}')" title="Rename">✏️</button>`;
+        btns+=`<button class="cp" onclick="event.stopPropagation();copyFile('${esc(f.path)}')" title="Copy">📋</button>`;
         if(f.type==='archive')btns+=`<button class="cp" onclick="event.stopPropagation();extractF('${esc(f.path)}')" title="Extract" style="color:var(--orn)">📦</button>`;
         btns+=`<button class="cp" onclick="event.stopPropagation();shareFile('${esc(f.path)}')" title="Share" style="color:#a78bfa">🔗</button>`;
-        if(f.download_url)btns+=`<button class="cp" onclick="event.stopPropagation();cpL('${f.download_url}')" title="Copy link">📋</button>`;
         btns+=`<button class="cp" onclick="event.stopPropagation();delF('${esc(f.path)}')" style="color:var(--red)" title="Delete">🗑</button>`;
       }
-      return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${click} data-path="${esc(f.path)}"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div><div>${btns}</div></div>`;
+      return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div><div>${btns}</div></div>`;
     }).join('')+'</div>';
   }
+}
+function fmSetSort(key){
+  if(fmSort===key)fmSortDir*=-1;else{fmSort=key;fmSortDir=1}
+  renderFM();
 }
 function fmGo(path){fmCurPath=path;rFiles()}
 function fmFilter(){renderFM()}
@@ -426,4 +455,93 @@ function toast(m,t='info'){
   const i=t==='ok'?'✓':t==='err'?'✕':'ℹ';const e=document.createElement('div');e.className='toast '+c;
   e.innerHTML=`<span>${i}</span> ${esc(m)}`;w.appendChild(e);
   setTimeout(()=>{e.style.animation='sIn .2s ease reverse';setTimeout(()=>e.remove(),200)},3000);
+}
+
+// === Context Menu ===
+function fmCtx(ev,path){
+  ev.preventDefault();ev.stopPropagation();
+  ctxTarget=path;
+  const m=document.getElementById('ctxMenu');
+  m.style.display='block';
+  m.style.left=Math.min(ev.clientX,window.innerWidth-180)+'px';
+  m.style.top=Math.min(ev.clientY,window.innerHeight-220)+'px';
+}
+document.addEventListener('click',()=>{document.getElementById('ctxMenu').style.display='none'});
+function ctxAction(act){
+  document.getElementById('ctxMenu').style.display='none';
+  if(!ctxTarget)return;
+  const f=fmAllItems.find(i=>i.path===ctxTarget);
+  switch(act){
+    case 'open':if(f&&f.type==='folder')fmGo(f.path);else openPreview(ctxTarget);break;
+    case 'copy':copyFile(ctxTarget);break;
+    case 'rename':if(f)showRename(ctxTarget,f.name);break;
+    case 'share':shareFile(ctxTarget);break;
+    case 'download':if(f&&f.download_url)window.open(f.download_url);break;
+    case 'delete':delF(ctxTarget);break;
+  }
+}
+
+// === Copy File ===
+async function copyFile(path){
+  try{const d=await api('POST','/api/files/copy/'+encodeURIComponent(path));toast('Copied → '+d.new_name,'ok');rFiles()}
+  catch(e){toast(e.message,'err')}
+}
+
+// === Preview / Editor ===
+async function openPreview(path){
+  previewPath=path;previewDirty=false;
+  const ext='.'+path.split('.').pop().toLowerCase();
+  const title=path.split('/').pop();
+  document.getElementById('prevTitle').textContent='📄 '+title;
+  document.getElementById('prevSaveBtn').style.display='none';
+  const body=document.getElementById('prevBody');
+  body.innerHTML='<div class="empty"><span class="spin"></span> Loading...</div>';
+  document.getElementById('previewM').style.display='flex';
+
+  // Image
+  if(IMG_EXTS.includes(ext)){
+    body.innerHTML=`<img class="prev-img" src="${base()}/files/${path}" alt="${esc(title)}">`;
+    return;
+  }
+  // Video
+  if(VID_EXTS.includes(ext)){
+    body.innerHTML=`<video class="prev-video" controls autoplay><source src="${base()}/stream/${path}"></video>`;
+    return;
+  }
+  // Audio
+  if(AUD_EXTS.includes(ext)){
+    body.innerHTML=`<div style="padding:20px;text-align:center"><div style="font-size:64px;margin-bottom:16px">🎵</div><audio controls autoplay style="width:100%"><source src="${base()}/stream/${path}"></audio></div>`;
+    return;
+  }
+  // Text / Code
+  try{
+    const d=await api('GET','/api/files/content/'+encodeURIComponent(path));
+    const meta=`<div class="prev-meta"><span>📏 ${d.lines} lines</span><span>📦 ${hs(d.size)}</span><span>🔤 ${d.encoding}</span><span>🏷 ${d.language}</span></div>`;
+    body.innerHTML=meta+`<textarea class="prev-textarea" id="prevEditor" spellcheck="false">${esc(d.content)}</textarea>`;
+    document.getElementById('prevSaveBtn').style.display='inline-flex';
+    document.getElementById('prevEditor').addEventListener('input',()=>{previewDirty=true});
+    // Tab key support
+    document.getElementById('prevEditor').addEventListener('keydown',e=>{
+      if(e.key==='Tab'){e.preventDefault();const t=e.target;const s=t.selectionStart,en=t.selectionEnd;t.value=t.value.substring(0,s)+'  '+t.value.substring(en);t.selectionStart=t.selectionEnd=s+2}
+      if(e.ctrlKey&&e.key==='s'){e.preventDefault();savePreview()}
+    });
+  }catch(e){
+    body.innerHTML=`<div class="empty"><span>⚠️</span>${esc(e.message||'Cannot preview this file')}</div>`;
+  }
+}
+function closePreview(){
+  if(previewDirty&&!confirm('Unsaved changes. Close anyway?'))return;
+  document.getElementById('previewM').style.display='none';
+  previewDirty=false;
+  // Stop any playing media
+  const v=document.querySelector('#prevBody video');if(v)v.pause();
+  const a=document.querySelector('#prevBody audio');if(a)a.pause();
+}
+async function savePreview(){
+  const ta=document.getElementById('prevEditor');
+  if(!ta)return;
+  try{
+    await api('PUT','/api/files/content/'+encodeURIComponent(previewPath),{content:ta.value});
+    toast('Saved! (version backed up)','ok');previewDirty=false;
+  }catch(e){toast(e.message,'err')}
 }

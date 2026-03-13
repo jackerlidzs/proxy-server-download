@@ -3,7 +3,7 @@ Files Router - file management, metadata, recycle bin, versioning, extract, comp
 """
 import shutil
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 
 from auth import verify_key
 from models import (
@@ -14,7 +14,8 @@ from config import DOWNLOAD_DIR, SERVER_URL
 from services.file_service import (
     list_dir_items, human_size, get_file_info, update_tags, update_description,
     soft_delete, list_trash, restore_from_trash, purge_trash,
-    create_version, list_versions, restore_version, index_file, file_type
+    create_version, list_versions, restore_version, index_file, file_type,
+    copy_item, read_text_file, save_text_file
 )
 from services.extract_service import extract_archive, compress_files, check_parts
 from services.download_service import downloads, sanitize
@@ -250,3 +251,34 @@ async def dedup_scan(_=Depends(verify_key)):
 @router.post("/dedup/clean")
 async def dedup_clean(strategy: str = "first", _=Depends(verify_key)):
     return await clean_duplicates(strategy)
+
+
+# --- Copy ---
+@router.post("/files/copy/{filepath:path}")
+async def copy_file(filepath: str, destination: str = "", _=Depends(verify_key)):
+    """Copy a file or folder. Destination is relative path (empty = same dir)."""
+    result = await copy_item(filepath, destination)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error", "Copy failed"))
+    return result
+
+
+# --- File Content (Preview/Edit) ---
+@router.get("/files/content/{filepath:path}")
+async def get_file_content(filepath: str, _=Depends(verify_key)):
+    """Read text file content for preview/editing."""
+    result = read_text_file(filepath)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.put("/files/content/{filepath:path}")
+async def save_file_content(filepath: str, request: Request, _=Depends(verify_key)):
+    """Save edited text file content. Auto-versions before overwrite."""
+    body = await request.json()
+    content = body.get("content", "")
+    result = await save_text_file(filepath, content)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result

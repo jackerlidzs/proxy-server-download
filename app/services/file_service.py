@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from config import (
     DOWNLOAD_DIR, TRASH_DIR, VERSIONS_DIR, SYSTEM_DIRS,
     MAX_HASH_CHUNK, MAX_VERSIONS, TRASH_EXPIRE_DAYS,
-    VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, ARCHIVE_EXTS, IMAGE_EXTS, SERVER_URL
+    VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, ARCHIVE_EXTS, IMAGE_EXTS, TEXT_EXTS, SERVER_URL
 )
 from database import get_db
 
@@ -340,3 +340,124 @@ def list_dir_items(target: Path, base: Path) -> list:
                 "ext": f.suffix.lower()
             })
     return items
+
+
+# --- Copy ---
+async def copy_item(rel_path: str, dest_path: str = "") -> dict:
+    """Copy a file or folder. If dest is empty, copy to same dir with ' (copy)' suffix."""
+    import shutil
+    fp = DOWNLOAD_DIR / rel_path
+    if not fp.exists():
+        return {"success": False, "error": "Source not found"}
+
+    if dest_path:
+        dest = DOWNLOAD_DIR / dest_path / fp.name
+    else:
+        # Auto-name: file (copy).ext or file (copy 2).ext
+        stem, ext = fp.stem, fp.suffix
+        parent = fp.parent
+        dest = parent / f"{stem} (copy){ext}"
+        i = 2
+        while dest.exists():
+            dest = parent / f"{stem} (copy {i}){ext}"
+            i += 1
+
+    if not str(dest.resolve()).startswith(str(DOWNLOAD_DIR.resolve())):
+        return {"success": False, "error": "Access denied"}
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if fp.is_dir():
+        shutil.copytree(str(fp), str(dest))
+    else:
+        shutil.copy2(str(fp), str(dest))
+        await index_file(dest)
+
+    return {
+        "success": True,
+        "new_path": str(dest.relative_to(DOWNLOAD_DIR)),
+        "new_name": dest.name
+    }
+
+
+# --- Text File Read/Edit ---
+def read_text_file(rel_path: str) -> dict:
+    """Read text file content with encoding detection."""
+    fp = DOWNLOAD_DIR / rel_path
+    if not fp.exists():
+        return {"error": "File not found"}
+
+    sz = fp.stat().st_size
+    if sz > 1024 * 1024:  # 1MB limit
+        return {"error": "File too large to edit (max 1MB)", "size": sz}
+
+    ext = fp.suffix.lower()
+    if ext not in TEXT_EXTS and not _is_likely_text(fp):
+        return {"error": f"Not a text file: {ext}"}
+
+    # Try common encodings
+    content = None
+    encoding = "utf-8"
+    for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252", "shift_jis"]:
+        try:
+            content = fp.read_text(encoding=enc)
+            encoding = enc
+            break
+        except (UnicodeDecodeError, ValueError):
+            continue
+
+    if content is None:
+        return {"error": "Cannot decode file"}
+
+    # Detect language for syntax highlighting
+    lang_map = {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".html": "html", ".css": "css", ".json": "json",
+        ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+        ".md": "markdown", ".sh": "bash", ".bash": "bash",
+        ".sql": "sql", ".go": "go", ".rs": "rust",
+        ".java": "java", ".c": "c", ".cpp": "cpp", ".h": "c",
+        ".rb": "ruby", ".php": "php", ".jsx": "jsx", ".tsx": "tsx",
+        ".toml": "toml", ".ini": "ini", ".conf": "nginx",
+    }
+
+    return {
+        "content": content,
+        "encoding": encoding,
+        "size": sz,
+        "language": lang_map.get(ext, "text"),
+        "lines": content.count("\n") + 1,
+        "writable": True
+    }
+
+
+async def save_text_file(rel_path: str, content: str) -> dict:
+    """Save text content to file. Auto-versions before overwrite."""
+    fp = DOWNLOAD_DIR / rel_path
+    if not str(fp.resolve()).startswith(str(DOWNLOAD_DIR.resolve())):
+        return {"error": "Access denied"}
+
+    # Version existing file
+    if fp.exists():
+        await create_version(rel_path)
+
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(content, encoding="utf-8")
+    await index_file(fp)
+
+    return {"success": True, "size": fp.stat().st_size, "path": rel_path}
+
+
+def _is_likely_text(fp: Path) -> bool:
+    """Heuristic: check if first 8KB contains mostly printable chars."""
+    try:
+        with open(fp, "rb") as f:
+            chunk = f.read(8192)
+        if not chunk:
+            return True
+        # If >10% non-text bytes, probably binary
+        text_chars = set(range(32, 127)) | {9, 10, 13}  # printable + tab/newline/cr
+        non_text = sum(1 for b in chunk if b not in text_chars)
+        return non_text / len(chunk) < 0.1
+    except Exception:
+        return False
+
