@@ -250,17 +250,17 @@ function fmSel(el,path){
   document.getElementById('fmSelCount').textContent=cnt;
 }
 async function fmMkdir(){
-  const name=prompt('Folder name:');if(!name)return;
+  const name=await dlgPrompt('📁 New Folder','Enter folder name:');if(!name)return;
   try{await api('POST','/api/files/mkdir?path='+encodeURIComponent(fmCurPath),{name});toast('Created '+name,'ok');rFiles()}
   catch(e){toast(e.message,'err')}
 }
 async function fmBulkDel(){
-  if(!confirm(`Delete ${fmSelected.size} items? (moved to Recycle Bin)`))return;
+  if(!await dlgConfirm('🗑 Delete Files',`Move ${fmSelected.size} items to Recycle Bin?`))return;
   try{await api('POST','/api/files/delete-bulk',{filenames:[...fmSelected]});toast(`Deleted ${fmSelected.size} items`,'ok');rFiles();rMedia();health()}
   catch(e){toast(e.message,'err')}
 }
 async function fmBulkCompress(){
-  const name=prompt('Archive name (e.g. files.zip):','archive.zip');if(!name)return;
+  const name=await dlgPrompt('🗜️ Compress','Archive name (e.g. files.zip):','archive.zip');if(!name)return;
   const fmt=name.endsWith('.tar.gz')||name.endsWith('.tgz')?'tar.gz':'zip';
   try{await api('POST','/api/compress',{filenames:[...fmSelected],archive_name:name,format:fmt});toast('Compression started','ok');rAll()}
   catch(e){toast(e.message,'err')}
@@ -289,43 +289,30 @@ async function doRename(){
   catch(e){toast(e.message,'err')}
 }
 async function delF(path){
-  if(!confirm('Delete '+path+'? (moved to Recycle Bin)'))return;
+  if(!await dlgConfirm('🗑 Delete','Move "'+path.split('/').pop()+'" to Recycle Bin?'))return;
   try{await api('DELETE','/api/files/'+encodeURIComponent(path));toast('Moved to trash','ok');rFiles();rMedia();health()}
   catch(e){toast(e.message,'err')}
 }
 
 // Extract
 async function extractF(path){
-  // For multi-part RAR: check parts first, then only extract part1
   const name=path.split('/').pop().toLowerCase();
   const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
   if(partMatch){
-    // Multi-part RAR: always extract via part1
-    const group=partMatch[1];
-    const partNum=parseInt(partMatch[2]);
+    const group=partMatch[1];const partNum=parseInt(partMatch[2]);
     const dir=path.substring(0,path.length-name.length);
     const part1Path=dir+group+'.part1.rar';
-    // Check parts completeness first
     try{
       const check=await api('POST','/api/extract/check/'+encodeURIComponent(path));
-      if(check.is_multipart && !check.complete){
-        toast(`Missing parts: ${check.missing_files.join(', ')}`,'err');
-        return;
-      }
+      if(check.is_multipart&&!check.complete){toast(`Missing parts: ${check.missing_files.join(', ')}`,'err');return}
     }catch(e){}
-    // Only extract part1
-    if(partNum!==1){
-      toast('Redirecting to part1 for extraction...','info');
-    }
-    const del=confirm('Delete archive files after extraction?');
-    try{
-      const r=await api('POST','/api/extract/'+encodeURIComponent(part1Path),{delete_after:del});
-      toast(r.message||'Extraction started','ok');rFiles();
-    }catch(e){toast(e.message,'err')}
+    if(partNum!==1)toast('Redirecting to part1 for extraction...','info');
+    const del=await dlgConfirm('📦 Extract','Delete archive files after extraction?');
+    try{const r=await api('POST','/api/extract/'+encodeURIComponent(part1Path),{delete_after:del});toast(r.message||'Extraction started','ok');rFiles()}
+    catch(e){toast(e.message,'err')}
   }else{
-    // Single archive file
-    const del=confirm('Delete archive files after extraction?');
-    try{const r=await api('POST','/api/extract/'+encodeURIComponent(path),{delete_after:del});toast(r.message||'Extraction started','ok');rFiles();}
+    const del=await dlgConfirm('📦 Extract','Delete archive files after extraction?');
+    try{const r=await api('POST','/api/extract/'+encodeURIComponent(path),{delete_after:del});toast(r.message||'Extraction started','ok');rFiles()}
     catch(e){toast(e.message,'err')}
   }
 }
@@ -360,7 +347,7 @@ async function showDetail(path){
 }
 function closeDetail(){document.getElementById('detailPanel').classList.remove('open')}
 async function restoreVer(path,v){
-  if(!confirm(`Restore version ${v}?`))return;
+  if(!await dlgConfirm('📋 Restore','Restore to version '+v+'?'))return;
   try{await api('POST','/api/files/restore-version/'+encodeURIComponent(path)+'?version='+v);toast('Version restored','ok');rFiles();closeDetail()}
   catch(e){toast(e.message,'err')}
 }
@@ -380,12 +367,12 @@ async function trashRestore(id){
   catch(e){toast(e.message,'err')}
 }
 async function trashPurge(id){
-  if(!confirm('Permanently delete?'))return;
+  if(!await dlgConfirm('⚠️ Permanent Delete','This cannot be undone. Delete permanently?'))return;
   try{await api('DELETE','/api/trash/'+id);toast('Permanently deleted','ok');rTrash();health()}
   catch(e){toast(e.message,'err')}
 }
 async function trashPurgeAll(){
-  if(!confirm('Permanently delete ALL items in recycle bin?'))return;
+  if(!await dlgConfirm('⚠️ Empty Trash','Permanently delete ALL items? This cannot be undone.'))return;
   try{await api('DELETE','/api/trash/purge');toast('Trash emptied','ok');rTrash();health()}
   catch(e){toast(e.message,'err')}
 }
@@ -405,7 +392,7 @@ async function rDedup(){
   }catch(e){el.innerHTML='<div class="empty">Error: '+esc(e.message)+'</div>'}
 }
 async function dedupClean(){
-  if(!confirm('Remove duplicate files? (keeps one copy)'))return;
+  if(!await dlgConfirm('🧹 Clean Duplicates','Remove duplicate files? One copy of each will be kept.'))return;
   try{const r=await api('POST','/api/dedup/clean?strategy=first');toast(`Removed ${r.deleted_count} files · Freed ${r.freed_human}`,'ok');rDedup();rFiles();health()}
   catch(e){toast(e.message,'err')}
 }
@@ -465,12 +452,29 @@ async function startHls(path){
 }
 
 // Share
-async function shareFile(filepath){
-  const hours=prompt('Expire in hours (0=never):','24');
-  if(hours===null)return;
-  const pw=prompt('Password (leave empty for none):','');
-  try{const r=await api('POST','/api/share',{filepath,expire_hours:parseInt(hours)||0,password:pw||null});cpL(r.url);toast('Share link copied: '+r.url,'ok')}
-  catch(e){toast(e.message,'err')}
+let shareTarget='';
+function shareFile(filepath){
+  shareTarget=filepath;
+  document.getElementById('shareFileName').textContent='📄 '+filepath.split('/').pop();
+  document.getElementById('shareHours').value='24';
+  document.getElementById('sharePwd').value='';
+  document.getElementById('shareResult').style.display='none';
+  document.getElementById('shareGoBtn').style.display='inline-flex';
+  document.getElementById('shareM').style.display='flex';
+}
+function closeShare(){document.getElementById('shareM').style.display='none'}
+async function doShare(){
+  const hours=parseInt(document.getElementById('shareHours').value)||0;
+  const pw=document.getElementById('sharePwd').value.trim()||null;
+  const btn=document.getElementById('shareGoBtn');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+  try{
+    const r=await api('POST','/api/share',{filepath:shareTarget,expire_hours:hours,password:pw});
+    document.getElementById('shareUrl').value=r.url;
+    document.getElementById('shareResult').style.display='block';
+    document.getElementById('shareGoBtn').style.display='none';
+    toast('Share link created!','ok');rShares();
+  }catch(e){toast(e.message,'err')}
+  finally{btn.disabled=false;btn.innerHTML='🔗 Create'}
 }
 async function rShares(){
   try{
@@ -482,13 +486,23 @@ async function rShares(){
   }catch(e){console.error(e)}
 }
 async function delShare(token){
-  if(!confirm('Delete share link?'))return;
+  if(!await dlgConfirm('🗑 Delete Share','Remove this share link?'))return;
   try{await api('DELETE','/api/share/'+token);toast('Share deleted','ok');rShares()}
   catch(e){toast(e.message,'err')}
 }
 
 // Utils
-function cpL(u){navigator.clipboard.writeText(u).then(()=>toast('Copied!','info'))}
+function cpL(u){
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(u).then(()=>toast('Copied!','info')).catch(()=>cpFallback(u));
+  }else{cpFallback(u)}
+}
+function cpFallback(u){
+  const t=document.createElement('textarea');t.value=u;t.style.cssText='position:fixed;opacity:0';
+  document.body.appendChild(t);t.select();
+  try{document.execCommand('copy');toast('Copied!','info')}catch{toast('Copy failed','err')}
+  document.body.removeChild(t);
+}
 function hs(b){if(!b)return'0 B';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return b.toFixed(1)+' '+u[i]}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 function toast(m,t='info'){
@@ -496,6 +510,56 @@ function toast(m,t='info'){
   const i=t==='ok'?'✓':t==='err'?'✕':'ℹ';const e=document.createElement('div');e.className='toast '+c;
   e.innerHTML=`<span>${i}</span> ${esc(m)}`;w.appendChild(e);
   setTimeout(()=>{e.style.animation='sIn .2s ease reverse';setTimeout(()=>e.remove(),200)},3000);
+}
+
+// === Custom Dialog System (replaces alert/confirm/prompt) ===
+let _dlgResolve=null,_dlgMode='confirm';
+function dlgConfirm(title,msg){
+  return new Promise(res=>{
+    _dlgResolve=res;_dlgMode='confirm';
+    document.getElementById('dlgTitle').textContent=title;
+    document.getElementById('dlgMsg').textContent=msg;
+    document.getElementById('dlgInput').style.display='none';
+    document.getElementById('dlgCancel').style.display='inline-flex';
+    document.getElementById('dlgOk').textContent='OK';
+    document.getElementById('dialogM').style.display='flex';
+  });
+}
+function dlgPrompt(title,msg,def){
+  return new Promise(res=>{
+    _dlgResolve=res;_dlgMode='prompt';
+    document.getElementById('dlgTitle').textContent=title;
+    document.getElementById('dlgMsg').textContent=msg;
+    document.getElementById('dlgInput').style.display='block';
+    const inp=document.getElementById('dlgIn');inp.value=def||'';inp.focus();
+    document.getElementById('dlgCancel').style.display='inline-flex';
+    document.getElementById('dlgOk').textContent='OK';
+    document.getElementById('dialogM').style.display='flex';
+    inp.addEventListener('keypress',function h(e){if(e.key==='Enter'){inp.removeEventListener('keypress',h);dlgOk()}});
+  });
+}
+function dlgAlert(title,msg){
+  return new Promise(res=>{
+    _dlgResolve=res;_dlgMode='alert';
+    document.getElementById('dlgTitle').textContent=title;
+    document.getElementById('dlgMsg').textContent=msg;
+    document.getElementById('dlgInput').style.display='none';
+    document.getElementById('dlgCancel').style.display='none';
+    document.getElementById('dlgOk').textContent='OK';
+    document.getElementById('dialogM').style.display='flex';
+  });
+}
+function dlgOk(){
+  document.getElementById('dialogM').style.display='none';
+  if(!_dlgResolve)return;
+  if(_dlgMode==='prompt')_dlgResolve(document.getElementById('dlgIn').value.trim()||null);
+  else _dlgResolve(true);
+  _dlgResolve=null;
+}
+function dlgResolve(v){
+  document.getElementById('dialogM').style.display='none';
+  if(_dlgResolve)_dlgResolve(v);
+  _dlgResolve=null;
 }
 
 // === Context Menu ===
@@ -571,7 +635,7 @@ async function openPreview(path){
   }
 }
 function closePreview(){
-  if(previewDirty&&!confirm('Unsaved changes. Close anyway?'))return;
+  if(previewDirty){dlgConfirm('⚠️ Unsaved Changes','Discard changes and close?').then(ok=>{if(ok){previewDirty=false;document.getElementById('previewM').style.display='none';const v=document.querySelector('#prevBody video');if(v)v.pause();const a=document.querySelector('#prevBody audio');if(a)a.pause()}});return}
   document.getElementById('previewM').style.display='none';
   previewDirty=false;
   // Stop any playing media
