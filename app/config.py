@@ -20,7 +20,7 @@ JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "72"))
 
 # Downloads
 MAX_CONNECTIONS = int(os.getenv("MAX_CONNECTIONS", "16"))
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
+MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 CLEANUP_HOURS = int(os.getenv("CLEANUP_HOURS", "48"))
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost")
 

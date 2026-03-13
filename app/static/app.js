@@ -114,76 +114,75 @@ function stab(n,el){
 
 // Downloads
 async function subUrl(){
-  const url=document.getElementById('dlUrl').value.trim();
-  if(!url){toast('Enter URL','err');return}
+  const raw=document.getElementById('dlUrl').value.trim();
+  if(!raw){toast('Enter URL(s)','err');return}
+  const urls=raw.split('\n').map(s=>s.trim()).filter(s=>/^https?:\/\//i.test(s));
+  if(!urls.length){toast('No valid URLs found','err');return}
   let h={};const ht=document.getElementById('dlH').value.trim();
-  if(ht){try{h=JSON.parse(ht)}catch{toast('Invalid JSON','err');return}}
-  const fn=document.getElementById('dlFn').value.trim()||undefined;
+  if(ht){try{h=JSON.parse(ht)}catch{toast('Invalid JSON headers','err');return}}
+  const fn=urls.length===1?document.getElementById('dlFn').value.trim()||undefined:undefined;
   const eng=document.getElementById('dlEng').value;
   const b=document.getElementById('bUrl');b.disabled=true;b.innerHTML='<span class="spin"></span>';
-  try{const d=await api('POST','/api/download',{url,headers:h,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlUrl').value='';document.getElementById('dlH').value='';rAll()}
-  catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
+  let ok=0;
+  for(const url of urls){
+    try{await api('POST','/api/download',{url,headers:h,filename:fn,engine:eng});ok++}catch(e){console.error(e)}
+  }
+  b.disabled=false;b.innerHTML='⬇ Download';
+  if(ok)document.getElementById('dlUrl').value='';
+  rAll();
 }
-async function subCurl(){
-  const cmd=document.getElementById('dlCurl').value.trim();
-  if(!cmd){toast('Paste cURL','err');return}
-  const fn=document.getElementById('dlCFn').value.trim()||undefined;
-  const eng=document.getElementById('dlCE').value;
-  const b=document.getElementById('bCurl');b.disabled=true;b.innerHTML='<span class="spin"></span>';
-  try{const d=await api('POST','/api/download',{url:'p',curl_command:cmd,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlCurl').value='';rAll()}
-  catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
-}
-function splitBatchInput(text){
-  // Join backslash-continued lines
+function splitCurlCmds(text){
   const joined=text.replace(/\\\s*\n/g,' ');
   const items=[];
-  // Split into lines
   const lines=joined.split('\n').map(s=>s.trim()).filter(Boolean);
   let i=0;
   while(i<lines.length){
     const line=lines[i];
     if(/^curl\s/i.test(line)){
-      // Collect entire curl command (may span until next 'curl ' or plain URL)
-      let cmd=line;
-      i++;
-      while(i<lines.length && !/^curl\s/i.test(lines[i]) && !/^https?:\/\//i.test(lines[i])){
-        cmd+=' '+lines[i]; i++;
+      let cmd=line;i++;
+      while(i<lines.length&&!/^curl\s/i.test(lines[i])&&!/^https?:\/\//i.test(lines[i])){
+        cmd+=' '+lines[i];i++;
       }
       items.push({type:'curl',value:cmd.trim()});
-    } else if(/^https?:\/\//i.test(line)){
-      items.push({type:'url',value:line});
-      i++;
-    } else { i++; }
+    }else if(/^https?:\/\//i.test(line)){
+      items.push({type:'url',value:line});i++;
+    }else{i++}
   }
   return items;
 }
-async function subBatch(){
-  const raw=document.getElementById('dlBatch').value.trim();
-  if(!raw){toast('Paste links or curl commands','err');return}
-  const items=splitBatchInput(raw);
-  if(!items.length){toast('No URLs or curl commands detected','err');return}
-  const eng=document.getElementById('dlBE').value;
-  const b=document.getElementById('bBatch');
-  const info=document.getElementById('batchInfo');
-  b.disabled=true;
-  let ok=0,fail=0;
-  info.innerHTML=`⏳ Submitting 0/${items.length}...`;
+async function subCurl(){
+  const raw=document.getElementById('dlCurl').value.trim();
+  if(!raw){toast('Paste cURL command(s)','err');return}
+  const items=splitCurlCmds(raw);
+  if(!items.length){toast('No valid commands found','err');return}
+  const eng=document.getElementById('dlCE').value;
+  const b=document.getElementById('bCurl');
+  const info=document.getElementById('curlInfo');
+  b.disabled=true;b.innerHTML='<span class="spin"></span>';
+  let ok=0;
+  if(items.length>1&&info)info.innerHTML=`⏳ 0/${items.length}`;
   for(let i=0;i<items.length;i++){
-    info.innerHTML=`⏳ Submitting ${i+1}/${items.length}...`;
+    if(items.length>1&&info)info.innerHTML=`⏳ ${i+1}/${items.length}`;
     try{
       const body=items[i].type==='curl'
-        ? {url:'p',curl_command:items[i].value,engine:eng}
-        : {url:items[i].value,engine:eng};
-      await api('POST','/api/download',body);
-      ok++;
-    }catch(e){fail++;console.error('Batch item failed:',e)}
+        ?{url:'p',curl_command:items[i].value,engine:eng}
+        :{url:items[i].value,engine:eng};
+      await api('POST','/api/download',body);ok++;
+    }catch(e){console.error(e)}
   }
-  b.disabled=false;
-  const msg=`✅ ${ok} started` + (fail?`, ❌ ${fail} failed`:'');
-  info.innerHTML=msg;
-  toast(msg,'ok');
-  document.getElementById('dlBatch').value='';
+  b.disabled=false;b.innerHTML='⬇ Download';
+  if(info)info.innerHTML='';
+  if(ok)document.getElementById('dlCurl').value='';
   rAll();
+}
+async function cancelDl(tid){
+  try{await api('DELETE','/api/downloads/'+tid);rAll()}catch(e){toast(e.message,'err')}
+}
+async function resumeDl(tid){
+  try{await api('POST','/api/downloads/'+tid+'/resume');rAll()}catch(e){toast(e.message,'err')}
+}
+async function clearDone(){
+  try{const r=await api('DELETE','/api/downloads');rAll()}catch(e){toast(e.message,'err')}
 }
 
 async function rAll(){
@@ -196,20 +195,25 @@ function renderDL(items){
   document.getElementById('sAct').textContent=act;document.getElementById('sDone').textContent=done;
   const w=hasAct;hasAct=act>0;if(hasAct!==w)startPoll();
   if(!items.length){el.innerHTML='<div class="empty"><span>📭</span>No downloads</div>';return}
-  const ord={downloading:0,extracting:1,compressing:1,queued:2,completed:3,failed:4};
-  items.sort((a,b)=>(ord[a.status]??5)-(ord[b.status]??5)||(b.created_at||'').localeCompare(a.created_at||''));
+  const ord={downloading:0,extracting:1,compressing:1,queued:2,completed:3,cancelled:4,failed:5};
+  items.sort((a,b)=>(ord[a.status]??6)-(ord[b.status]??6)||(b.created_at||'').localeCompare(a.created_at||''));
   el.innerHTML=items.map(d=>{
-    const sc={queued:'st-q',downloading:'st-d',completed:'st-c',failed:'st-f',extracting:'st-e',compressing:'st-e'};
+    const sc={queued:'st-q',downloading:'st-d',completed:'st-c',failed:'st-f',cancelled:'st-q',extracting:'st-e',compressing:'st-e'};
     const pct=d.percent||0;const isA=d.status==='downloading'||d.status==='extracting'||d.status==='compressing';
     const eng=d.engine||'';const eH=eng.includes('curl')?'<span class="eng eng-c">curl</span>':eng.includes('aria')?'<span class="eng eng-a">aria2c</span>':'';
     let pH='';
     if(isA)pH=`<div class="prog"><div class="prog-f on" style="width:${pct}%"></div></div><div class="dl-pi"><span>${pct.toFixed(1)}% · ${hs(d.downloaded||0)}${d.total_size?' / '+hs(d.total_size):''}</span><span class="dl-spd">${d.speed||'...'}</span></div>`;
     else if(d.status==='completed')pH='<div class="prog"><div class="prog-f" style="width:100%"></div></div>';
-    let aH='';if(d.status==='completed'&&d.download_url)aH=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpL('${d.download_url}')">📋</button>`;
+    // Action buttons
+    let aH='';
+    if(d.status==='downloading'||d.status==='queued')aH=`<button class="btn-d" onclick="cancelDl('${d.task_id}')" title="Cancel" style="font-size:10px;padding:2px 6px">✕</button>`;
+    if(d.status==='cancelled'||d.status==='failed')aH=`<button class="btn-g" onclick="resumeDl('${d.task_id}')" title="Resume" style="font-size:10px;padding:2px 6px">▶</button>`;
+    if(d.status==='completed'&&d.download_url)aH=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpL('${d.download_url}')">📋</button>`;
     let eR='';if(d.status==='failed'&&d.error)eR=`<div style="font-size:10px;color:var(--red);margin-top:4px;word-break:break-all">❌ ${esc(d.error.substring(0,150))}</div>`;
+    if(d.status==='cancelled')eR=`<div style="font-size:10px;color:var(--txt3);margin-top:4px">Cancelled — click ▶ to resume</div>`;
     const sz=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
     const t=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
-    const ic={extracting:'📦',compressing:'🗜️'}[d.status]||'📄';
+    const ic={extracting:'📦',compressing:'🗜️',cancelled:'⏸'}[d.status]||'📄';
     return`<div class="dl-i"><div class="dl-top"><div class="dl-name">${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
   }).join('');
 }

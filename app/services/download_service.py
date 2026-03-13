@@ -1,5 +1,6 @@
 """
 Download Service - curl-impersonate & aria2c engines
+With cancel (kill subprocess) and resume support
 """
 import re
 import uuid
@@ -12,6 +13,7 @@ from urllib.parse import urlparse, unquote
 from config import DOWNLOAD_DIR, MAX_CONNECTIONS, MAX_CONCURRENT, SERVER_URL
 
 downloads: dict = {}
+_processes: dict = {}  # tid -> subprocess for cancel/kill
 semaphore: asyncio.Semaphore = None
 
 
@@ -81,31 +83,48 @@ def parse_curl_command(cmd: str):
     return url, headers
 
 
+def cancel_download(tid: str):
+    """Cancel a download by killing its subprocess."""
+    if tid in downloads:
+        downloads[tid]["status"] = "cancelled"
+        downloads[tid]["speed"] = ""
+    proc = _processes.pop(tid, None)
+    if proc and proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 async def monitor_progress(tid, fp, total=0):
     t0 = asyncio.get_event_loop().time()
-    last = 0
+    last_sz, last_t = 0, t0
     while tid in downloads and downloads[tid]["status"] == "downloading":
         try:
             if fp.exists():
                 sz = fp.stat().st_size
-                el = asyncio.get_event_loop().time() - t0
-                spd = (sz - last) / 1.0
+                now = asyncio.get_event_loop().time()
+                dt = now - last_t
+                if dt > 0:
+                    spd = (sz - last_sz) / dt
+                    downloads[tid]["speed"] = human_speed(spd) if spd > 0 else ""
+                    last_sz, last_t = sz, now
                 downloads[tid]["downloaded"] = sz
-                downloads[tid]["speed"] = human_speed(spd if spd > 0 else sz / max(el, 1))
                 if total > 0:
                     pct = min(99.9, sz / total * 100)
                     downloads[tid].update({"percent": round(pct, 1), "progress": f"{pct:.1f}%", "total_size": total})
                 else:
                     downloads[tid]["progress"] = human_size(sz)
-                last = sz
         except Exception:
             pass
         await asyncio.sleep(1)
 
 
-async def dl_curl(tid, url, headers, filename):
+async def dl_curl(tid, url, headers, filename, resume=False):
     fp = DOWNLOAD_DIR / filename
     total = 0
+
+    # Get content-length for progress
     try:
         hcmd = ["curl_chrome", "-L", "-s", "-S", "-I", "--max-redirs", "10", "--connect-timeout", "15"]
         for k, v in headers.items():
@@ -124,6 +143,9 @@ async def dl_curl(tid, url, headers, filename):
 
     cmd = ["curl_chrome", "-L", "-S", "--max-redirs", "10", "--retry", "3", "--retry-delay", "3",
            "--connect-timeout", "30", "--max-time", "7200", "-o", str(fp)]
+    # Resume support
+    if resume and fp.exists():
+        cmd.extend(["-C", "-"])
     for k, v in headers.items():
         cmd.extend(["-H", f"{k}: {v}"])
     cmd.append(url)
@@ -131,7 +153,14 @@ async def dl_curl(tid, url, headers, filename):
     mon = asyncio.create_task(monitor_progress(tid, fp, total))
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        _processes[tid] = proc
         _, stderr = await proc.communicate()
+        _processes.pop(tid, None)
+
+        # Check if cancelled during download
+        if downloads.get(tid, {}).get("status") == "cancelled":
+            return False, "Cancelled"
+
         if proc.returncode == 0 and fp.exists():
             sz = fp.stat().st_size
             if sz < 1000:
@@ -148,12 +177,14 @@ async def dl_curl(tid, url, headers, filename):
                 "completed_at": datetime.now().isoformat(), "progress": "100%", "speed": ""
             })
             return True, None
-        if fp.exists():
-            fp.unlink()
+        if proc.returncode == -9 or downloads.get(tid, {}).get("status") == "cancelled":
+            return False, "Cancelled"
         return False, stderr.decode(errors="ignore").strip() or f"curl exit {proc.returncode}"
     except FileNotFoundError:
+        _processes.pop(tid, None)
         return False, "curl_chrome not found"
     except Exception as e:
+        _processes.pop(tid, None)
         return False, str(e)
     finally:
         mon.cancel()
@@ -163,7 +194,7 @@ async def dl_curl(tid, url, headers, filename):
             pass
 
 
-async def dl_aria2c(tid, url, headers, filename, conns):
+async def dl_aria2c(tid, url, headers, filename, conns, resume=False):
     fp = DOWNLOAD_DIR / filename
     cmd = ["aria2c", "-x", str(conns), "-s", str(conns), "-k", "1M", "-m", "5", "--retry-wait=3",
            "-t", "60", "--connect-timeout=30", "-c", "--auto-file-renaming=false", "--allow-overwrite=true",
@@ -173,6 +204,7 @@ async def dl_aria2c(tid, url, headers, filename, conns):
     cmd.append(url)
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        _processes[tid] = proc
         lines = []
         while True:
             line = await proc.stdout.readline()
@@ -187,7 +219,16 @@ async def dl_aria2c(tid, url, headers, filename, conns):
                     downloads[tid].update({"percent": float(m.group(1)), "progress": f"{m.group(1)}%"})
                 if sm:
                     downloads[tid]["speed"] = sm.group(1) + "/s"
+            # Check cancel
+            if downloads.get(tid, {}).get("status") == "cancelled":
+                proc.kill()
+                break
         await proc.wait()
+        _processes.pop(tid, None)
+
+        if downloads.get(tid, {}).get("status") == "cancelled":
+            return False, "Cancelled"
+
         if proc.returncode == 0 and fp.exists():
             sz = fp.stat().st_size
             downloads[tid].update({
@@ -198,32 +239,35 @@ async def dl_aria2c(tid, url, headers, filename, conns):
             return True, None
         return False, " | ".join(lines[-3:]) or "Unknown error"
     except FileNotFoundError:
+        _processes.pop(tid, None)
         return False, "aria2c not found"
     except Exception as e:
+        _processes.pop(tid, None)
         return False, str(e)
 
 
-async def run_download(tid, url, headers, filename, conns, engine="auto"):
+async def run_download(tid, url, headers, filename, conns, engine="auto", resume=False):
     async with semaphore:
         filename = sanitize(filename)
         downloads[tid].update({"status": "downloading", "filename": filename, "percent": 0, "speed": "", "downloaded": 0})
         ok, err = False, None
         if engine == "aria2c":
             downloads[tid]["engine"] = "aria2c"
-            ok, err = await dl_aria2c(tid, url, headers, filename, conns)
+            ok, err = await dl_aria2c(tid, url, headers, filename, conns, resume)
         elif engine == "curl":
             downloads[tid]["engine"] = "curl_chrome"
-            ok, err = await dl_curl(tid, url, headers, filename)
+            ok, err = await dl_curl(tid, url, headers, filename, resume)
         else:
             downloads[tid]["engine"] = "curl_chrome"
-            ok, err = await dl_curl(tid, url, headers, filename)
+            ok, err = await dl_curl(tid, url, headers, filename, resume)
             if not ok and err and "not found" in err.lower():
                 downloads[tid]["engine"] = "aria2c"
                 downloads[tid]["percent"] = 0
-                ok, err = await dl_aria2c(tid, url, headers, filename, conns)
+                ok, err = await dl_aria2c(tid, url, headers, filename, conns, resume)
 
         if not ok:
-            downloads[tid].update({"status": "failed", "error": err or "Unknown", "speed": ""})
+            if downloads.get(tid, {}).get("status") != "cancelled":
+                downloads[tid].update({"status": "failed", "error": err or "Unknown", "speed": ""})
         else:
             # Index file metadata (NO auto-extract)
             from services.file_service import index_file

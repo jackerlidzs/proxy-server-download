@@ -140,33 +140,27 @@
 <div class="card">
 <div class="card-h">📥 New Download</div>
 <div class="card-b">
-<div class="tabs"><button class="tab active" onclick="stab('url',this)">URL</button><button class="tab" onclick="stab('curl',this)">cURL</button><button class="tab" onclick="stab('batch',this)">📦 Batch</button></div>
+<div class="tabs"><button class="tab active" onclick="stab('url',this)">URL</button><button class="tab" onclick="stab('curl',this)">cURL</button></div>
 <div id="tab-url" class="tc active">
-<div class="fg"><label class="fl">URL</label><input type="text" id="dlUrl" class="fi" placeholder="https://example.com/file.zip"></div>
-<div class="fg"><label class="fl">Headers (JSON)</label><textarea id="dlH" class="fa" style="min-height:60px" placeholder='{"referer":"..."}'></textarea></div>
-<div class="fr"><div class="fg"><label class="fl">Filename</label><input type="text" id="dlFn" class="fi" placeholder="Auto"></div><div class="fg"><label class="fl">Engine</label><select id="dlEng" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div></div>
-<button class="btn btn-p" onclick="subUrl()" id="bUrl">⬇ Download</button>
+<div class="fg"><label class="fl">URL(s) — one per line</label><textarea id="dlUrl" class="fa" style="min-height:60px" placeholder="https://example.com/file1.zip
+https://example.com/file2.zip"></textarea></div>
+<div class="fg"><label class="fl">Headers (JSON)</label><textarea id="dlH" class="fa" style="min-height:50px" placeholder='{"referer":"..."}'></textarea></div>
+<div class="fr"><div class="fg"><label class="fl">Filename</label><input type="text" id="dlFn" class="fi" placeholder="Auto (for single URL)"></div><div class="fg"><label class="fl">Engine</label><select id="dlEng" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div></div>
+<button class="btn btn-p" onclick="subUrl()" id="bUrl" style="width:auto;min-width:140px">⬇ Download</button>
 </div>
 <div id="tab-curl" class="tc">
-<div class="fg"><label class="fl">cURL Command</label><textarea id="dlCurl" class="fa" style="min-height:100px" placeholder="curl 'https://...'"></textarea><div class="fh">Chrome → Network → Copy as cURL</div></div>
-<div class="fr"><div class="fg"><label class="fl">Filename</label><input type="text" id="dlCFn" class="fi" placeholder="Auto"></div><div class="fg"><label class="fl">Engine</label><select id="dlCE" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div></div>
-<button class="btn btn-p" onclick="subCurl()" id="bCurl">⬇ Download</button>
-</div>
-<div id="tab-batch" class="tc">
-<div class="fg"><label class="fl">Multiple Links / cURL Commands</label><textarea id="dlBatch" class="fa" style="min-height:180px;font-family:monospace;font-size:11px" placeholder="Paste URLs or curl commands (one per line). Supports mixed input:
+<div class="fg"><label class="fl">cURL Command(s)</label><textarea id="dlCurl" class="fa" style="min-height:140px;font-family:monospace;font-size:11px" placeholder="Paste one or more curl commands here.
 
-https://example.com/file1.zip
-https://example.com/file2.zip
-curl 'https://example.com/file3.rar' \
+curl 'https://example.com/file1.rar' \
   -H 'referer: https://...'
-curl 'https://example.com/file4.rar' \
-  -H 'referer: https://...'"></textarea><div class="fh">Supports plain URLs + curl commands — each will start as a separate download</div></div>
-<div class="fr"><div class="fg"><label class="fl">Engine</label><select id="dlBE" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div><div class="fg" style="flex:2"><div id="batchInfo" style="font-size:12px;color:var(--txt3);line-height:28px"></div></div></div>
-<button class="btn btn-p" onclick="subBatch()" id="bBatch" style="width:100%">📦 Download All</button>
+curl 'https://example.com/file2.rar' \
+  -H 'referer: https://...'"></textarea><div class="fh">Chrome → Network → Copy as cURL · Supports multiple curl commands</div></div>
+<div class="fr"><div class="fg"><label class="fl">Engine</label><select id="dlCE" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div><div class="fg" style="flex:2"><div id="curlInfo" style="font-size:12px;color:var(--txt3);line-height:28px"></div></div></div>
+<button class="btn btn-p" onclick="subCurl()" id="bCurl" style="width:auto;min-width:140px">⬇ Download</button>
 </div>
 </div></div>
 <div class="card">
-<div class="card-h"><span>📊 Downloads</span><button class="btn-s" onclick="rAll()">↻</button></div>
+<div class="card-h"><span>📊 Downloads</span><div style="display:flex;gap:4px"><button class="btn-s" onclick="clearDone()">🧹 Clear</button><button class="btn-s" onclick="rAll()">↻</button></div></div>
 <div class="card-b" style="padding:8px;max-height:520px;overflow-y:auto">
 <div class="dl-list" id="dlList"><div class="empty"><span>📭</span>No downloads</div></div>
 </div></div>

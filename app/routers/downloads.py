@@ -11,7 +11,7 @@ from models import DownloadRequest
 from config import MAX_CONNECTIONS
 from services.download_service import (
     downloads, run_download, parse_curl_command,
-    filename_from_url, sanitize
+    filename_from_url, sanitize, cancel_download
 )
 
 router = APIRouter(prefix="/api", tags=["downloads"])
@@ -58,11 +58,34 @@ async def get_status(tid: str, _=Depends(verify_key)):
 
 
 @router.delete("/downloads/{tid}")
-async def cancel_download(tid: str, _=Depends(verify_key)):
+async def api_cancel_download(tid: str, _=Depends(verify_key)):
     if tid not in downloads:
         raise HTTPException(404)
-    downloads[tid]["status"] = "cancelled"
+    cancel_download(tid)
     return {"message": f"Cancelled {tid}"}
+
+
+@router.post("/downloads/{tid}/resume")
+async def resume_download(tid: str, _=Depends(verify_key)):
+    if tid not in downloads:
+        raise HTTPException(404)
+    d = downloads[tid]
+    if d["status"] not in ("cancelled", "failed"):
+        raise HTTPException(400, "Can only resume cancelled or failed downloads")
+    url = d.get("url", "")
+    if not url:
+        raise HTTPException(400, "No URL to resume")
+    # Reset status
+    d.update({"status": "queued", "percent": 0, "speed": "", "error": ""})
+    # Re-parse headers if we had curl_command (headers stored in original request)
+    headers = {}
+    engine = d.get("engine", "auto")
+    fn = d.get("filename", "")
+    asyncio.create_task(run_download(
+        tid, url, headers, fn,
+        MAX_CONNECTIONS, engine, resume=True
+    ))
+    return {"message": f"Resuming {fn}", "task_id": tid}
 
 
 @router.delete("/downloads")
