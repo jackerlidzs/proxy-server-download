@@ -52,6 +52,7 @@ COPY config.py .
 COPY database.py .
 COPY models.py .
 COPY auth.py .
+COPY utils.py .
 COPY main.py .
 COPY routers/ ./routers/
 COPY services/ ./services/
