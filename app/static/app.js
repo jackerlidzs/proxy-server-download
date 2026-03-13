@@ -352,20 +352,27 @@ async function extractF(path){
   const name=path.split('/').pop();
   const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
   let extractPath=path;
+  let isMultipart=false;
   if(partMatch){
     const group=partMatch[1];const partNum=parseInt(partMatch[2]);
     const dir=path.substring(0,path.length-name.length);
     extractPath=dir+group+'.part1.rar';
+    isMultipart=true;
     try{
       const check=await api('POST','/api/extract/check/'+encodeURIComponent(path));
       if(check.is_multipart&&!check.complete){toast(`Missing parts: ${check.missing_files.join(', ')}`,'err');return}
     }catch(e){}
     if(partNum!==1)toast('Using part1 for extraction...','info');
   }
-  const del=await dlgConfirm('📦 Extract Archive','Delete archive files after extraction?');
+  const archName=extractPath.split('/').pop();
+  const msg=isMultipart
+    ? `Extract "${archName}" and all related parts?\n\nChoose "OK" to delete archive files after extraction.\nChoose "Cancel" to keep them.`
+    : `Extract "${archName}"?\n\nChoose "OK" to delete the archive after extraction.\nChoose "Cancel" to keep it.`;
+  const del=await dlgConfirm('📦 Extract Archive', msg);
   try{
     const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),{delete_after:del});
-    toast(r.message||'Extraction started','ok');
+    const dest=r.destination||'';
+    toast(`Extracting → ${dest||archName}`,'ok');
     startExtractPoll();
   }catch(e){toast(e.message,'err')}
 }
@@ -615,7 +622,7 @@ function dlgConfirm(title,msg){
   return new Promise(res=>{
     _dlgResolve=res;_dlgMode='confirm';
     document.getElementById('dlgTitle').textContent=title;
-    document.getElementById('dlgMsg').textContent=msg;
+    document.getElementById('dlgMsg').innerHTML=esc(msg).replace(/\n/g,'<br>');
     document.getElementById('dlgInput').style.display='none';
     document.getElementById('dlgCancel').style.display='inline-flex';
     document.getElementById('dlgOk').textContent='OK';
