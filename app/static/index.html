@@ -131,25 +131,39 @@
 
 <!-- ====== File Manager Page ====== -->
 <div id="p-fm" class="page">
-<div class="card">
-<div class="fm-toolbar">
+<!-- FM Header: breadcrumb + actions -->
+<div class="fm-header">
+<div class="fm-nav-bar">
+<button class="fm-nav-btn" onclick="fmGoUp()" title="Go up">⬆</button>
 <div class="fm-path" id="fmPath"><span class="fm-crumb current" onclick="fmGo('')">📁 /</span></div>
-<div class="fm-actions">
-<input type="text" class="fm-search" id="fmSearch" placeholder="🔍 Search..." oninput="fmFilter()">
-<button class="btn-s" onclick="fmMkdir()">📁+</button>
+</div>
+<div class="fm-actions-bar">
+<div class="fm-sel-info" id="fmSelInfo" style="display:none"><span id="fmSelCount">0</span> selected</div>
+<button class="btn-s" id="fmBulkCompress" style="display:none" onclick="fmBulkCompress()">🗜️</button>
+<button class="btn-d" id="fmBulkDel" style="display:none" onclick="fmBulkDel()">🗑</button>
+<div class="fm-divider" id="fmBulkDiv" style="display:none"></div>
+<input type="text" class="fm-search" id="fmSearch" placeholder="🔍 Filter..." oninput="fmFilter()">
+<select class="fm-sort-sel" id="fmSortSel" onchange="fmSortChange(this.value)">
+<option value="name">Name</option><option value="size">Size</option>
+<option value="date">Date</option><option value="type">Type</option>
+</select>
+<button class="btn-s" id="fmSortDirBtn" onclick="fmToggleSortDir()" title="Sort direction">↑</button>
+<div class="fm-divider"></div>
+<button class="btn-s" onclick="fmMkdir()" title="New folder">📁+</button>
+<button class="btn-s" onclick="document.getElementById('uploadFile').click()" title="Upload">📤</button>
 <button class="btn-s" id="fmViewBtn" onclick="fmToggleView()">☰</button>
-<button class="btn-s" onclick="rFiles()">↻</button>
-<button class="btn-o" id="fmBulkCompress" style="display:none" onclick="fmBulkCompress()">🗜️ Compress</button>
-<button class="btn-d" id="fmBulkDel" style="display:none" onclick="fmBulkDel()">🗑 Delete</button>
+<button class="btn-s" onclick="rFiles()" title="Refresh">↻</button>
 </div>
 </div>
-<div class="upload-zone" id="uploadZone" onclick="document.getElementById('uploadFile').click()">
-<span>📤</span>
-<p>Drop files here or click to upload</p>
+<!-- Upload hidden input -->
 <input type="file" id="uploadFile" style="display:none" onchange="fmUpload(this.files)" multiple>
+<!-- Upload drop zone (overlay, only visible on drag) -->
+<div class="fm-drop-zone" id="uploadZone">
+<div class="fm-drop-inner">📤 Drop files here to upload</div>
 </div>
-<div id="fmContent"></div>
-</div></div>
+<!-- File content -->
+<div class="fm-body" id="fmContent"></div>
+</div>
 
 <!-- ====== Media Page ====== -->
 <div id="p-media" class="page">

@@ -11,10 +11,13 @@ const AUD_EXTS=['.mp3','.flac','.aac','.wav','.ogg','.m4a'];
 document.addEventListener('DOMContentLoaded',()=>{
   if(!K)showAuth();else init();
   document.getElementById('aKey').addEventListener('keypress',e=>{if(e.key==='Enter')auth()});
-  const uz=document.getElementById('uploadZone');
-  ['dragenter','dragover'].forEach(e=>uz.addEventListener(e,ev=>{ev.preventDefault();uz.classList.add('drag')}));
-  ['dragleave','drop'].forEach(e=>uz.addEventListener(e,ev=>{ev.preventDefault();uz.classList.remove('drag')}));
-  uz.addEventListener('drop',ev=>fmUpload(ev.dataTransfer.files));
+  // Drag-only upload zone (overlay)
+  const body=document.body;
+  let dragCount=0;
+  body.addEventListener('dragenter',ev=>{ev.preventDefault();dragCount++;document.getElementById('uploadZone').classList.add('drag')});
+  body.addEventListener('dragleave',ev=>{ev.preventDefault();dragCount--;if(dragCount<=0){dragCount=0;document.getElementById('uploadZone').classList.remove('drag')}});
+  body.addEventListener('dragover',ev=>ev.preventDefault());
+  body.addEventListener('drop',ev=>{ev.preventDefault();dragCount=0;document.getElementById('uploadZone').classList.remove('drag');if(ev.dataTransfer.files.length)fmUpload(ev.dataTransfer.files)});
 });
 
 function base(){return(U||location.origin).replace(/\/$/,'')}
@@ -166,6 +169,8 @@ async function rFiles(){
 function renderFM(){
   fmSelected.clear();document.getElementById('fmBulkDel').style.display='none';
   document.getElementById('fmBulkCompress').style.display='none';
+  document.getElementById('fmSelInfo').style.display='none';
+  document.getElementById('fmBulkDiv').style.display='none';
   const pathEl=document.getElementById('fmPath');
   let crumbs='<span class="fm-crumb'+(fmCurPath?'':' current')+'" onclick="fmGo(\'\')">📁 /</span>';
   if(fmCurPath){
@@ -228,14 +233,21 @@ function fmSetSort(key){
   renderFM();
 }
 function fmGo(path){fmCurPath=path;rFiles()}
+function fmGoUp(){if(!fmCurPath)return;const p=fmCurPath.split('/');p.pop();fmGo(p.join('/'))}
 function fmFilter(){renderFM()}
 function fmToggleView(){fmViewMode=fmViewMode==='grid'?'list':'grid';document.getElementById('fmViewBtn').textContent=fmViewMode==='grid'?'☰':'▦';renderFM()}
+function fmSortChange(v){fmSort=v;renderFM()}
+function fmToggleSortDir(){fmSortDir*=-1;document.getElementById('fmSortDirBtn').textContent=fmSortDir>0?'↑':'↓';renderFM()}
 function fmSel(el,path){
   if(fmSelected.has(path)){fmSelected.delete(path);el.classList.remove('selected')}
   else{fmSelected.add(path);el.classList.add('selected')}
   const cnt=fmSelected.size;
-  document.getElementById('fmBulkDel').style.display=cnt?'inline-flex':'none';
-  document.getElementById('fmBulkCompress').style.display=cnt?'inline-flex':'none';
+  const show=cnt>0;
+  document.getElementById('fmBulkDel').style.display=show?'inline-flex':'none';
+  document.getElementById('fmBulkCompress').style.display=show?'inline-flex':'none';
+  document.getElementById('fmSelInfo').style.display=show?'inline-flex':'none';
+  document.getElementById('fmBulkDiv').style.display=show?'block':'none';
+  document.getElementById('fmSelCount').textContent=cnt;
 }
 async function fmMkdir(){
   const name=prompt('Folder name:');if(!name)return;
