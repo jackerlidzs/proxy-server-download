@@ -5,15 +5,25 @@ services:
     restart: unless-stopped
     environment:
       - DOWNLOAD_DIR=/downloads
+      - DB_PATH=/data/proxy.db
       - API_KEY=${API_KEY:-changeme}
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-key}
       - MAX_CONNECTIONS=${MAX_CONNECTIONS:-16}
       - CLEANUP_HOURS=${CLEANUP_HOURS:-48}
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
       - SERVER_URL=${SERVER_URL:-http://localhost}
+      - TRASH_EXPIRE_DAYS=${TRASH_EXPIRE_DAYS:-7}
+      - MAX_VERSIONS=${MAX_VERSIONS:-5}
     volumes:
       - downloads:/downloads
+      - appdata:/data
     networks:
       - proxy-net
+    # Memory limit for 1.9GB RAM server
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   nginx:
     build: ./nginx
@@ -27,9 +37,14 @@ services:
       - app
     networks:
       - proxy-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
 volumes:
   downloads:
+  appdata:
 
 networks:
   proxy-net:

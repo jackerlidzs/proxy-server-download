@@ -3,226 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proxy Server</title>
+<title>Proxy Server v5</title>
+<meta name="description" content="Advanced Download Proxy + Media Server with file management, streaming, and deduplication">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{
---bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a25;--bg4:#22222f;
---glass:rgba(20,20,35,0.6);--glass2:rgba(30,30,50,0.4);
---bdr:rgba(255,255,255,0.06);--bdr2:rgba(255,255,255,0.1);
---txt:#f0f0f5;--txt2:#8888a0;--txt3:#55556a;
---pri:#7c5cfc;--pri2:#9b7fff;--pri3:rgba(124,92,252,0.12);
---grn:#34d399;--grn3:rgba(52,211,153,0.1);
---ylw:#fbbf24;--ylw3:rgba(251,191,36,0.1);
---red:#f87171;--red3:rgba(248,113,113,0.1);
---cyn:#22d3ee;--cyn3:rgba(34,211,238,0.1);
---r:12px;--rs:8px;
-}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;-webkit-font-smoothing:antialiased}
-body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(ellipse at 30% 20%,rgba(124,92,252,0.04) 0%,transparent 50%),radial-gradient(ellipse at 70% 80%,rgba(34,211,238,0.03) 0%,transparent 50%);pointer-events:none;z-index:0}
-
-/* Sidebar */
-.sidebar{position:fixed;left:0;top:0;width:220px;height:100vh;background:var(--bg2);border-right:1px solid var(--bdr);display:flex;flex-direction:column;z-index:50;padding:16px 12px}
-.sb-logo{display:flex;align-items:center;gap:10px;padding:4px 8px;margin-bottom:24px}
-.sb-logo-icon{width:32px;height:32px;background:linear-gradient(135deg,var(--pri),var(--cyn));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff}
-.sb-logo span{font-size:14px;font-weight:700;letter-spacing:-0.3px}
-.sb-nav{flex:1;display:flex;flex-direction:column;gap:2px}
-.sb-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--rs);cursor:pointer;transition:.15s;color:var(--txt2);font-size:13px;font-weight:500;border:none;background:none;width:100%;text-align:left;font-family:'Inter',sans-serif}
-.sb-item:hover{background:var(--glass2);color:var(--txt)}
-.sb-item.active{background:var(--pri3);color:var(--pri2);font-weight:600}
-.sb-item i{font-size:16px;width:20px;text-align:center;font-style:normal}
-.sb-foot{padding:8px;border-top:1px solid var(--bdr)}
-.sb-disk{font-size:11px;color:var(--txt3);margin-bottom:6px}
-.sb-disk-bar{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden}
-.sb-disk-fill{height:100%;background:linear-gradient(90deg,var(--pri),var(--cyn));border-radius:2px;transition:width .5s}
-.sb-disk-txt{display:flex;justify-content:space-between;font-size:10px;color:var(--txt3);margin-top:4px}
-
-/* Main */
-.main{margin-left:220px;min-height:100vh;position:relative;z-index:1}
-
-/* Topbar */
-.topbar{height:52px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;padding:0 24px;justify-content:space-between;background:rgba(10,10,15,0.7);backdrop-filter:blur(20px);position:sticky;top:0;z-index:40}
-.topbar-l{display:flex;align-items:center;gap:12px}
-.topbar-title{font-size:15px;font-weight:600}
-.topbar-r{display:flex;align-items:center;gap:8px}
-.tb-badge{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:11px;background:var(--glass);border:1px solid var(--bdr);color:var(--txt2)}
-.tb-dot{width:6px;height:6px;border-radius:50%;background:var(--grn);animation:pulse 2s infinite}
-.tb-dot.off{background:var(--red);animation:none}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.tb-btn{width:30px;height:30px;border:1px solid var(--bdr2);border-radius:var(--rs);background:transparent;color:var(--txt3);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:.15s}
-.tb-btn:hover{border-color:var(--pri);color:var(--pri2)}
-
-/* Content */
-.content{padding:20px 24px 40px}
-.page{display:none}.page.active{display:block}
-
-/* Stats row */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
-.stat-card{background:var(--glass);backdrop-filter:blur(12px);border:1px solid var(--bdr);border-radius:var(--r);padding:16px 18px;transition:border .2s}
-.stat-card:hover{border-color:var(--bdr2)}
-.stat-num{font-size:28px;font-weight:800;background:linear-gradient(135deg,var(--txt),var(--txt2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1.1}
-.stat-label{font-size:10px;color:var(--txt3);text-transform:uppercase;letter-spacing:.7px;font-weight:600;margin-top:4px}
-
-/* Glass card */
-.card{background:var(--glass);backdrop-filter:blur(12px);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden}
-.card-h{padding:12px 16px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600}
-.card-b{padding:14px}
-
-/* Grid */
-.grid-2{display:grid;grid-template-columns:350px 1fr;gap:12px}
-
-/* Form */
-.fg{margin-bottom:10px}
-.fl{display:block;font-size:10px;font-weight:600;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
-.fi,.fa,.fs{width:100%;padding:9px 12px;background:rgba(15,15,25,0.6);border:1px solid var(--bdr);border-radius:var(--rs);color:var(--txt);font-family:'Inter',sans-serif;font-size:13px;outline:none;transition:border .15s}
-.fi:focus,.fa:focus,.fs:focus{border-color:var(--pri)}
-.fa{resize:vertical;min-height:90px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5}
-.fs{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2355556a' d='M5 7L0 2h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
-.fr{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.fh{font-size:10px;color:var(--txt3);margin-top:3px}
-
-/* Tabs */
-.tabs{display:flex;gap:2px;margin-bottom:12px;background:rgba(10,10,15,0.5);border-radius:var(--rs);padding:3px}
-.tab{flex:1;padding:6px;border:none;background:transparent;color:var(--txt3);font-size:12px;font-weight:500;cursor:pointer;border-radius:5px;transition:.15s;font-family:'Inter',sans-serif}
-.tab.active{background:var(--pri);color:#fff}
-.tab:hover:not(.active){color:var(--txt)}
-.tc{display:none}.tc.active{display:block}
-
-/* Buttons */
-.btn{padding:8px 14px;border:none;border-radius:var(--rs);font-size:13px;font-weight:600;cursor:pointer;transition:.2s;font-family:'Inter',sans-serif;display:inline-flex;align-items:center;gap:5px;justify-content:center}
-.btn-p{background:linear-gradient(135deg,var(--pri),#6a4ff0);color:#fff;width:100%;box-shadow:0 4px 20px rgba(124,92,252,0.25)}
-.btn-p:hover{box-shadow:0 4px 30px rgba(124,92,252,0.4);transform:translateY(-1px)}
-.btn-p:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
-.btn-s{padding:5px 10px;font-size:11px;background:var(--glass);color:var(--txt2);border:1px solid var(--bdr);border-radius:var(--rs);cursor:pointer;font-family:'Inter',sans-serif;font-weight:500}
-.btn-s:hover{border-color:var(--bdr2);color:var(--txt)}
-.btn-d{padding:5px 8px;font-size:11px;background:var(--red3);color:var(--red);border:1px solid rgba(248,113,113,.12);border-radius:var(--rs);cursor:pointer;font-family:'Inter',sans-serif;font-weight:500}
-.btn-d:hover{background:rgba(248,113,113,.15)}
-
-/* Download list */
-.dl-list{display:flex;flex-direction:column;gap:6px}
-.dl-i{background:rgba(10,10,20,0.4);border:1px solid var(--bdr);border-radius:var(--rs);padding:10px 12px;transition:border .15s}
-.dl-i:hover{border-color:var(--bdr2)}
-.dl-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px}
-.dl-name{font-size:12px;font-weight:500;word-break:break-all;line-height:1.3}
-.dl-acts{display:flex;gap:4px;flex-shrink:0}
-.dl-meta{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--txt3);margin-bottom:6px;flex-wrap:wrap}
-
-/* Status badges */
-.st{display:inline-flex;padding:2px 7px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
-.st-q{background:var(--pri3);color:var(--pri2)}
-.st-d{background:var(--ylw3);color:var(--ylw)}
-.st-c{background:var(--grn3);color:var(--grn)}
-.st-f{background:var(--red3);color:var(--red)}
-.st-e{background:rgba(168,85,247,.1);color:#a78bfa}
-.eng{font-size:9px;padding:1px 5px;border-radius:4px;font-weight:500}
-.eng-c{background:var(--cyn3);color:var(--cyn)}
-.eng-a{background:rgba(168,85,247,.08);color:#a78bfa}
-
-/* Progress */
-.prog{width:100%;height:3px;background:var(--bg4);border-radius:2px;overflow:hidden}
-.prog-f{height:100%;background:linear-gradient(90deg,var(--pri),var(--cyn));border-radius:2px;transition:width .6s}
-.prog-f.on::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);animation:shm 1.5s infinite}
-.prog-f.on{position:relative}
-@keyframes shm{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
-.dl-pi{display:flex;justify-content:space-between;font-size:10px;color:var(--txt3);margin-top:3px}
-.dl-spd{color:var(--cyn);font-weight:600}
-
-/* File Manager */
-.fm-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bdr);flex-wrap:wrap}
-.fm-path{display:flex;align-items:center;gap:4px;font-size:12px;flex-wrap:wrap}
-.fm-crumb{color:var(--txt3);cursor:pointer;transition:.15s;padding:2px 6px;border-radius:4px}
-.fm-crumb:hover{color:var(--pri2);background:var(--pri3)}
-.fm-crumb.current{color:var(--txt);font-weight:600}
-.fm-sep{color:var(--txt3);font-size:10px}
-.fm-actions{display:flex;gap:4px}
-.fm-search{width:180px;padding:5px 10px;background:var(--bg3);border:1px solid var(--bdr);border-radius:var(--rs);color:var(--txt);font-size:12px;outline:none;font-family:'Inter',sans-serif}
-.fm-search:focus{border-color:var(--pri)}
-
-.fm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;padding:12px}
-.fm-item{background:rgba(10,10,20,0.3);border:1px solid var(--bdr);border-radius:var(--rs);padding:14px 10px;text-align:center;cursor:pointer;transition:.2s;position:relative}
-.fm-item:hover{border-color:var(--bdr2);background:rgba(124,92,252,0.03);transform:translateY(-1px)}
-.fm-item.selected{border-color:var(--pri);background:var(--pri3)}
-.fm-icon{font-size:32px;margin-bottom:6px;display:block}
-.fm-fname{font-size:11px;font-weight:500;word-break:break-all;line-height:1.3;max-height:2.6em;overflow:hidden}
-.fm-fsize{font-size:10px;color:var(--txt3);margin-top:3px}
-.fm-check{position:absolute;top:6px;right:6px;width:16px;height:16px;border-radius:4px;border:1px solid var(--bdr2);display:none;align-items:center;justify-content:center;font-size:10px;background:var(--bg3)}
-.fm-item.selected .fm-check{display:flex;background:var(--pri);border-color:var(--pri);color:#fff}
-.fm-item:hover .fm-check{display:flex}
-
-/* File list view */
-.fm-list{display:flex;flex-direction:column}
-.fm-row{display:grid;grid-template-columns:1fr 100px 140px 80px;align-items:center;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.03);transition:.1s;cursor:pointer;font-size:13px}
-.fm-row:hover{background:rgba(124,92,252,0.03)}
-.fm-row.selected{background:var(--pri3)}
-.fm-row-h{font-size:10px;font-weight:600;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;border-bottom:1px solid var(--bdr)}
-.fm-row-h:hover{background:transparent}
-.fm-row-name{display:flex;align-items:center;gap:8px;font-weight:500}
-.fm-row-name span{font-size:18px}
-
-/* Player */
-.player-wrap{background:#000;border-radius:var(--r);overflow:hidden;margin-bottom:16px;position:relative}
-.player-wrap video{width:100%;max-height:65vh;display:block}
-.player-empty{display:flex;align-items:center;justify-content:center;min-height:280px;color:var(--txt3);flex-direction:column;gap:8px}
-.player-empty span{font-size:48px;opacity:.2}
-.player-empty p{font-size:13px}
-.now-playing{margin-bottom:14px;font-size:13px;font-weight:500;display:none;padding:10px 14px;background:var(--glass);border:1px solid var(--bdr);border-radius:var(--rs);display:flex;align-items:center;gap:8px}
-
-/* Media grid */
-.mg{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-.mc{background:rgba(10,10,20,0.4);border:1px solid var(--bdr);border-radius:var(--rs);padding:14px;cursor:pointer;transition:.2s}
-.mc:hover{border-color:var(--pri);transform:translateY(-2px);box-shadow:0 8px 30px rgba(124,92,252,0.08)}
-.mc.playing{border-color:var(--pri);box-shadow:0 0 0 1px var(--pri)}
-.mc-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.mc-icon{font-size:28px}
-.mc-badge{font-size:9px;padding:2px 6px;border-radius:4px;font-weight:600;text-transform:uppercase}
-.mc-vid{background:var(--pri3);color:var(--pri2)}
-.mc-aud{background:var(--grn3);color:var(--grn)}
-.mc-name{font-size:13px;font-weight:500;word-break:break-all;line-height:1.3;margin-bottom:4px}
-.mc-meta{font-size:11px;color:var(--txt3);display:flex;gap:8px}
-
-/* Upload area */
-.upload-zone{border:2px dashed var(--bdr2);border-radius:var(--r);padding:32px;text-align:center;transition:.2s;cursor:pointer;margin-bottom:12px}
-.upload-zone:hover,.upload-zone.drag{border-color:var(--pri);background:var(--pri3)}
-.upload-zone p{color:var(--txt3);font-size:13px;margin-top:8px}
-.upload-zone span{font-size:36px;display:block;margin-bottom:8px;opacity:.4}
-
-/* Empty */
-.empty{text-align:center;padding:32px;color:var(--txt3);font-size:13px}
-.empty span{font-size:28px;display:block;margin-bottom:8px;opacity:.3}
-
-/* Toast */
-.tw{position:fixed;top:60px;right:16px;display:flex;flex-direction:column;gap:6px;z-index:1000}
-.toast{padding:10px 16px;border-radius:var(--rs);font-size:12px;font-weight:500;box-shadow:0 8px 40px rgba(0,0,0,.6);animation:sIn .3s ease;display:flex;align-items:center;gap:6px;min-width:240px;backdrop-filter:blur(12px)}
-.t-ok{background:rgba(5,46,22,.9);border:1px solid rgba(52,211,153,.2);color:#6ee7b7}
-.t-err{background:rgba(69,10,10,.9);border:1px solid rgba(248,113,113,.2);color:#fca5a5}
-.t-info{background:rgba(30,27,75,.9);border:1px solid rgba(124,92,252,.2);color:#c4b5fd}
-@keyframes sIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
-
-/* Modal */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:200}
-.modal{background:var(--bg2);border:1px solid var(--bdr2);border-radius:var(--r);padding:24px;max-width:400px;width:92%;box-shadow:0 24px 80px rgba(0,0,0,.5)}
-.modal h2{font-size:16px;margin-bottom:4px}
-.modal p{color:var(--txt2);font-size:12px;margin-bottom:16px}
-
-.spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.15);border-top-color:#fff;border-radius:50%;animation:sp .6s linear infinite;display:inline-block}
-@keyframes sp{to{transform:rotate(360deg)}}
-.cp{background:none;border:none;color:var(--txt3);cursor:pointer;padding:3px;font-size:11px}
-.cp:hover{color:var(--pri2)}
-
-@media(max-width:860px){.sidebar{display:none}.main{margin-left:0}.grid-2{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.mg{grid-template-columns:1fr}}
-::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:3px}
-</style>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<!-- Auth -->
+<!-- Auth Modal -->
 <div id="authM" class="modal-bg" style="display:none">
 <div class="modal">
-<h2>🔐 Connect</h2><p>Enter API key to access.</p>
+<h2>🔐 Connect</h2>
+<div class="tabs"><button class="tab active" onclick="stab('apikey',this)">API Key</button><button class="tab" onclick="stab('jwtlogin',this)">Login</button></div>
+<div id="tab-apikey" class="tc active">
 <div class="fg"><label class="fl">API Key</label><input type="password" id="aKey" class="fi" placeholder="API key..." autofocus></div>
 <div class="fg"><label class="fl">Server URL</label><input type="text" id="aUrl" class="fi" placeholder="http://server:9090"><div class="fh">Leave empty for current URL</div></div>
 <button class="btn btn-p" onclick="auth()">Connect</button>
+</div>
+<div id="tab-jwtlogin" class="tc">
+<div class="fg"><label class="fl">Username</label><input type="text" id="jwtUser" class="fi" placeholder="username"></div>
+<div class="fg"><label class="fl">Password</label><input type="password" id="jwtPass" class="fi" placeholder="password"></div>
+<div class="fg"><label class="fl">Server URL</label><input type="text" id="jwtUrl" class="fi" placeholder="http://server:9090"><div class="fh">Leave empty for current URL</div></div>
+<button class="btn btn-p" onclick="jwtLogin()">Login</button>
+</div>
 </div></div>
 
 <!-- Rename Modal -->
@@ -235,6 +38,9 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 
 <div class="tw" id="toasts"></div>
 
+<!-- Detail Panel (slide-in) -->
+<div class="detail-panel" id="detailPanel"></div>
+
 <!-- Sidebar -->
 <aside class="sidebar">
 <div class="sb-logo"><div class="sb-logo-icon">⬇</div><span>Proxy Server</span></div>
@@ -242,6 +48,9 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 <button class="sb-item active" onclick="go('dl',this)"><i>📥</i>Downloads</button>
 <button class="sb-item" onclick="go('fm',this)"><i>📁</i>File Manager</button>
 <button class="sb-item" onclick="go('media',this)"><i>🎬</i>Media</button>
+<button class="sb-item" onclick="go('trash',this)"><i>♻️</i>Recycle Bin <span class="sb-badge" id="trashBadge" style="display:none">0</span></button>
+<button class="sb-item" onclick="go('dedup',this)"><i>🔍</i>Deduplication</button>
+<button class="sb-item" onclick="go('share',this)"><i>🔗</i>Share Links</button>
 </nav>
 <div class="sb-foot">
 <div class="sb-disk">Disk Usage</div>
@@ -255,6 +64,7 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 <header class="topbar">
 <div class="topbar-l"><div class="topbar-title" id="pageTitle">Downloads</div></div>
 <div class="topbar-r">
+<div id="userInfo" style="display:flex;align-items:center;gap:6px"></div>
 <div class="tb-badge"><div class="tb-dot" id="sDot"></div><span id="sTxt">...</span></div>
 <button class="tb-btn" onclick="showAuth()">⚙</button>
 </div>
@@ -304,19 +114,17 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 <button class="btn-s" onclick="fmMkdir()">📁+</button>
 <button class="btn-s" id="fmViewBtn" onclick="fmToggleView()">☰</button>
 <button class="btn-s" onclick="rFiles()">↻</button>
-<button class="btn-d" id="fmBulkDel" style="display:none" onclick="fmBulkDel()">🗑 Delete Selected</button>
+<button class="btn-o" id="fmBulkCompress" style="display:none" onclick="fmBulkCompress()">🗜️ Compress</button>
+<button class="btn-d" id="fmBulkDel" style="display:none" onclick="fmBulkDel()">🗑 Delete</button>
 </div>
 </div>
-<!-- Upload Zone -->
 <div class="upload-zone" id="uploadZone" onclick="document.getElementById('uploadFile').click()">
 <span>📤</span>
 <p>Drop files here or click to upload</p>
 <input type="file" id="uploadFile" style="display:none" onchange="fmUpload(this.files)" multiple>
 </div>
-<!-- File grid/list -->
 <div id="fmContent"></div>
-</div>
-</div>
+</div></div>
 
 <!-- ====== Media Page ====== -->
 <div id="p-media" class="page">
@@ -332,269 +140,35 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 </div></div>
 </div>
 
+<!-- ====== Recycle Bin Page ====== -->
+<div id="p-trash" class="page">
+<div class="card">
+<div class="card-h"><span>♻️ Recycle Bin</span><div><button class="btn-s" onclick="rTrash()">↻</button> <button class="btn-d" onclick="trashPurgeAll()">🗑 Empty Trash</button></div></div>
+<div class="card-b" style="padding:0">
+<div id="trashList"><div class="empty"><span>♻️</span>Recycle bin is empty</div></div>
+</div></div>
+</div>
+
+<!-- ====== Deduplication Page ====== -->
+<div id="p-dedup" class="page">
+<div class="card">
+<div class="card-h"><span>🔍 Deduplication</span><button class="btn-s" onclick="rDedup()">🔄 Scan</button></div>
+<div class="card-b" id="dedupContent">
+<div class="empty"><span>🔍</span>Click "Scan" to find duplicate files</div>
+</div></div>
+</div>
+
+<!-- ====== Share Links Page ====== -->
+<div id="p-share" class="page">
+<div class="card">
+<div class="card-h"><span>🔗 Share Links</span><button class="btn-s" onclick="rShares()">↻</button></div>
+<div class="card-b" style="padding:0">
+<div id="shareList"><div class="empty"><span>🔗</span>No share links yet</div></div>
+</div></div>
+</div>
+
 </div></div>
 
-<script>
-let K=localStorage.getItem('dp_key')||'',U=localStorage.getItem('dp_url')||'',poll=null,hasAct=false;
-let fmCurPath='',fmViewMode='grid',fmAllItems=[],fmSelected=new Set(),renameTarget='';
-
-document.addEventListener('DOMContentLoaded',()=>{
-if(!K)showAuth();else init();
-document.getElementById('aKey').addEventListener('keypress',e=>{if(e.key==='Enter')auth()});
-// Drag & drop
-const uz=document.getElementById('uploadZone');
-['dragenter','dragover'].forEach(e=>uz.addEventListener(e,ev=>{ev.preventDefault();uz.classList.add('drag')}));
-['dragleave','drop'].forEach(e=>uz.addEventListener(e,ev=>{ev.preventDefault();uz.classList.remove('drag')}));
-uz.addEventListener('drop',ev=>fmUpload(ev.dataTransfer.files));
-});
-
-function base(){return(U||location.origin).replace(/\/$/,'')}
-function showAuth(){document.getElementById('authM').style.display='flex';document.getElementById('aKey').focus()}
-function auth(){
-K=document.getElementById('aKey').value.trim();
-U=document.getElementById('aUrl').value.trim();
-if(!K){toast('Enter API key','err');return}
-localStorage.setItem('dp_key',K);localStorage.setItem('dp_url',U);
-document.getElementById('authM').style.display='none';init();
-}
-function init(){health();rAll();rFiles();rMedia();startPoll()}
-function startPoll(){if(poll)clearInterval(poll);poll=setInterval(()=>{rAll();health()},hasAct?1500:5000)}
-
-async function api(m,p,b,raw){
-const o={method:m,headers:{'Authorization':'Bearer '+K}};
-if(b&&!(b instanceof FormData)){o.headers['Content-Type']='application/json';o.body=JSON.stringify(b)}
-else if(b instanceof FormData){o.body=b}
-const r=await fetch(base()+p,o);
-if(r.status===401||r.status===403){showAuth();throw new Error('Unauthorized')}
-if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(e.detail||'Failed')}
-return r.json();
-}
-
-async function health(){
-try{
-const d=await api('GET','/health');
-document.getElementById('sDot').className='tb-dot';
-document.getElementById('sTxt').textContent='Online';
-document.getElementById('sDisk').textContent=d.disk_free_gb??'--';
-document.getElementById('sFiles').textContent=d.files_count??0;
-if(d.disk_total_gb&&d.disk_used_gb){
-const pct=(d.disk_used_gb/d.disk_total_gb*100).toFixed(0);
-document.getElementById('diskBar').style.width=pct+'%';
-document.getElementById('diskUsed').textContent=d.disk_used_gb.toFixed(1)+' GB used';
-document.getElementById('diskTotal').textContent=d.disk_total_gb.toFixed(0)+' GB';
-}
-}catch{document.getElementById('sDot').className='tb-dot off';document.getElementById('sTxt').textContent='Offline'}
-}
-
-// Nav
-function go(page,el){
-document.querySelectorAll('.sb-item').forEach(s=>s.classList.remove('active'));
-document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-el.classList.add('active');
-document.getElementById('p-'+page).classList.add('active');
-const titles={dl:'Downloads',fm:'File Manager',media:'Media'};
-document.getElementById('pageTitle').textContent=titles[page]||'';
-if(page==='fm')rFiles();
-if(page==='media')rMedia();
-}
-function stab(n,el){
-el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-el.closest('.card-b').querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
-el.classList.add('active');document.getElementById('tab-'+n).classList.add('active');
-}
-
-// Downloads
-async function subUrl(){
-const url=document.getElementById('dlUrl').value.trim();
-if(!url){toast('Enter URL','err');return}
-let h={};const ht=document.getElementById('dlH').value.trim();
-if(ht){try{h=JSON.parse(ht)}catch{toast('Invalid JSON','err');return}}
-const fn=document.getElementById('dlFn').value.trim()||undefined;
-const eng=document.getElementById('dlEng').value;
-const b=document.getElementById('bUrl');b.disabled=true;b.innerHTML='<span class="spin"></span>';
-try{const d=await api('POST','/api/download',{url,headers:h,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlUrl').value='';document.getElementById('dlH').value='';rAll()}
-catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
-}
-async function subCurl(){
-const cmd=document.getElementById('dlCurl').value.trim();
-if(!cmd){toast('Paste cURL','err');return}
-const fn=document.getElementById('dlCFn').value.trim()||undefined;
-const eng=document.getElementById('dlCE').value;
-const b=document.getElementById('bCurl');b.disabled=true;b.innerHTML='<span class="spin"></span>';
-try{const d=await api('POST','/api/download',{url:'p',curl_command:cmd,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlCurl').value='';rAll()}
-catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
-}
-
-async function rAll(){
-try{const d=await api('GET','/api/downloads');renderDL(d.downloads||[])}catch{}
-}
-
-function renderDL(items){
-const el=document.getElementById('dlList');
-const act=items.filter(i=>['downloading','queued','extracting'].includes(i.status)).length;
-const done=items.filter(i=>i.status==='completed').length;
-document.getElementById('sAct').textContent=act;document.getElementById('sDone').textContent=done;
-const w=hasAct;hasAct=act>0;if(hasAct!==w)startPoll();
-if(!items.length){el.innerHTML='<div class="empty"><span>📭</span>No downloads</div>';return}
-const ord={downloading:0,extracting:1,queued:2,completed:3,failed:4};
-items.sort((a,b)=>(ord[a.status]??5)-(ord[b.status]??5)||(b.created_at||'').localeCompare(a.created_at||''));
-el.innerHTML=items.map(d=>{
-const sc={queued:'st-q',downloading:'st-d',completed:'st-c',failed:'st-f',extracting:'st-e'};
-const pct=d.percent||0;const isA=d.status==='downloading'||d.status==='extracting';
-const eng=d.engine||'';const eH=eng.includes('curl')?'<span class="eng eng-c">curl</span>':eng.includes('aria')?'<span class="eng eng-a">aria2c</span>':'';
-let pH='';
-if(isA)pH=`<div class="prog"><div class="prog-f on" style="width:${pct}%"></div></div><div class="dl-pi"><span>${pct.toFixed(1)}% · ${hs(d.downloaded||0)}${d.total_size?' / '+hs(d.total_size):''}</span><span class="dl-spd">${d.speed||'...'}</span></div>`;
-else if(d.status==='completed')pH='<div class="prog"><div class="prog-f" style="width:100%"></div></div>';
-let aH='';if(d.status==='completed'&&d.download_url)aH=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpL('${d.download_url}')">📋</button>`;
-let eR='';if(d.status==='failed'&&d.error)eR=`<div style="font-size:10px;color:var(--red);margin-top:4px;word-break:break-all">❌ ${esc(d.error.substring(0,100))}</div>`;
-const sz=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
-const t=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
-const ic=d.status==='extracting'?'📦':'📄';
-return`<div class="dl-i"><div class="dl-top"><div class="dl-name">${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
-}).join('');
-}
-
-// File Manager
-async function rFiles(){
-try{
-const d=await api('GET','/api/files?path='+encodeURIComponent(fmCurPath));
-fmAllItems=d.items||[];renderFM();
-}catch(e){console.error(e)}
-}
-
-function renderFM(){
-fmSelected.clear();document.getElementById('fmBulkDel').style.display='none';
-// Breadcrumbs
-const pathEl=document.getElementById('fmPath');
-let crumbs='<span class="fm-crumb'+(fmCurPath?'':' current')+'" onclick="fmGo(\'\')">📁 /</span>';
-if(fmCurPath){
-const parts=fmCurPath.split('/');
-let acc='';
-parts.forEach((p,i)=>{acc+=(i?'/':'')+p;const a=acc;crumbs+=`<span class="fm-sep">›</span><span class="fm-crumb${i===parts.length-1?' current':''}" onclick="fmGo('${a}')">${esc(p)}</span>`});
-}
-pathEl.innerHTML=crumbs;
-
-let items=fmAllItems;
-const q=document.getElementById('fmSearch').value.toLowerCase();
-if(q)items=items.filter(f=>f.name.toLowerCase().includes(q));
-
-const el=document.getElementById('fmContent');
-if(!items.length){el.innerHTML='<div class="empty"><span>📂</span>Empty folder</div>';return}
-
-const icons={folder:'📁',video:'🎬',audio:'🎵',subtitle:'🔤',archive:'📦',image:'🖼',file:'📄'};
-
-if(fmViewMode==='grid'){
-el.innerHTML='<div class="fm-grid">'+items.map(f=>{
-const ic=icons[f.type]||'📄';
-const click=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`:f.download_url?`ondblclick="window.open('${f.download_url}')"`:''
-return`<div class="fm-item" onclick="fmSel(this,'${esc(f.path)}')" ${click} data-path="${esc(f.path)}"><div class="fm-check">✓</div><span class="fm-icon">${ic}</span><div class="fm-fname">${esc(f.name)}</div><div class="fm-fsize">${f.size_human}${f.items!=null?' · '+f.items+' items':''}</div></div>`;
-}).join('')+'</div>';
-}else{
-el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div>Name</div><div>Size</div><div>Modified</div><div></div></div>`+items.map(f=>{
-const ic=icons[f.type]||'📄';
-const click=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:''
-const date=f.modified?new Date(f.modified).toLocaleDateString():'';
-let btns='';
-if(f.type!=='folder'){
-btns+=`<button class="cp" onclick="event.stopPropagation();showRename('${esc(f.path)}','${esc(f.name)}')">✏️</button>`;
-if(f.download_url)btns+=`<button class="cp" onclick="event.stopPropagation();cpL('${f.download_url}')">📋</button>`;
-btns+=`<button class="cp" onclick="event.stopPropagation();delF('${esc(f.path)}')" style="color:var(--red)">🗑</button>`;
-}
-return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${click} data-path="${esc(f.path)}"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${date}</div><div>${btns}</div></div>`;
-}).join('')+'</div>';
-}
-}
-
-function fmGo(path){fmCurPath=path;rFiles()}
-function fmFilter(){renderFM()}
-function fmToggleView(){fmViewMode=fmViewMode==='grid'?'list':'grid';document.getElementById('fmViewBtn').textContent=fmViewMode==='grid'?'☰':'▦';renderFM()}
-
-function fmSel(el,path){
-if(fmSelected.has(path)){fmSelected.delete(path);el.classList.remove('selected')}
-else{fmSelected.add(path);el.classList.add('selected')}
-document.getElementById('fmBulkDel').style.display=fmSelected.size?'inline-flex':'none';
-}
-
-async function fmMkdir(){
-const name=prompt('Folder name:');if(!name)return;
-try{await api('POST','/api/files/mkdir?path='+encodeURIComponent(fmCurPath),{name});toast('Created '+name,'ok');rFiles()}
-catch(e){toast(e.message,'err')}
-}
-
-async function fmBulkDel(){
-if(!confirm(`Delete ${fmSelected.size} items?`))return;
-try{await api('POST','/api/files/delete-bulk',{filenames:[...fmSelected]});toast(`Deleted ${fmSelected.size} items`,'ok');rFiles();rMedia()}
-catch(e){toast(e.message,'err')}
-}
-
-async function fmUpload(files){
-if(!files||!files.length)return;
-for(const f of files){
-const fd=new FormData();fd.append('file',f);fd.append('path',fmCurPath);
-try{await api('POST','/api/upload',fd);toast('Uploaded '+f.name,'ok')}
-catch(e){toast('Upload failed: '+e.message,'err')}
-}
-rFiles();
-}
-
-function showRename(path,name){
-renameTarget=path;
-document.getElementById('renameM').style.display='flex';
-document.getElementById('renameOld').textContent='Rename: '+name;
-document.getElementById('renameIn').value=name;
-document.getElementById('renameIn').select();
-}
-function closeRename(){document.getElementById('renameM').style.display='none'}
-async function doRename(){
-const nn=document.getElementById('renameIn').value.trim();
-if(!nn){toast('Enter name','err');return}
-try{await api('POST','/api/files/rename/'+encodeURIComponent(renameTarget),{new_name:nn});toast('Renamed','ok');closeRename();rFiles()}
-catch(e){toast(e.message,'err')}
-}
-
-async function delF(path){
-if(!confirm('Delete '+path+'?'))return;
-try{await api('DELETE','/api/files/'+encodeURIComponent(path));toast('Deleted','ok');rFiles();rMedia()}
-catch(e){toast(e.message,'err')}
-}
-
-// Media
-async function rMedia(){
-try{const d=await api('GET','/api/media');renderM(d.media||[])}catch{}
-}
-function renderM(items){
-const el=document.getElementById('mediaList');
-if(!items.length){el.innerHTML='<div class="empty"><span>🎬</span>No media files yet</div>';return}
-el.innerHTML=items.map(m=>{
-const isV=m.type==='video';const ic=isV?'🎬':'🎵';
-const badge=isV?'<span class="mc-badge mc-vid">VIDEO</span>':'<span class="mc-badge mc-aud">AUDIO</span>';
-const subH=m.subtitles?.length?`<span>🔤 ${m.subtitles.length} sub</span>`:'';
-return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playM('${esc(m.filename)}','${m.stream_url}',${JSON.stringify(m.subtitles||[]).replace(/"/g,'&quot;')})"><div class="mc-top"><div class="mc-icon">${ic}</div>${badge}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div></div>`;
-}).join('');
-}
-
-function playM(name,url,subs){
-const v=document.getElementById('vp');const e=document.getElementById('playerE');const n=document.getElementById('nowP');
-v.querySelectorAll('track').forEach(t=>t.remove());
-v.src=url;v.style.display='block';e.style.display='none';
-n.style.display='flex';n.innerHTML='🎬 <strong>'+esc(name)+'</strong> <button class="btn-s" style="margin-left:auto" onclick="window.open(\''+url+'\')">↗ Open</button>';
-if(subs&&subs.length)subs.forEach((s,i)=>{const t=document.createElement('track');t.kind='subtitles';t.label=s.filename;t.src=s.url;if(i===0)t.default=true;v.appendChild(t)});
-v.play().catch(()=>{});
-document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
-const c=document.getElementById('mc-'+name);if(c)c.classList.add('playing');
-document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
-}
-
-// Utils
-function cpL(u){navigator.clipboard.writeText(u).then(()=>toast('Copied!','info'))}
-function hs(b){if(!b)return'0 B';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return b.toFixed(1)+' '+u[i]}
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
-function toast(m,t='info'){
-const w=document.getElementById('toasts');const c=t==='ok'?'t-ok':t==='err'?'t-err':'t-info';
-const i=t==='ok'?'✓':t==='err'?'✕':'ℹ';const e=document.createElement('div');e.className='toast '+c;
-e.innerHTML=`<span>${i}</span> ${esc(m)}`;w.appendChild(e);
-setTimeout(()=>{e.style.animation='sIn .2s ease reverse';setTimeout(()=>e.remove(),200)},3000);
-}
-</script>
+<script src="/static/app.js"></script>
 </body>
 </html>

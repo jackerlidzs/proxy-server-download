@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install aria2c, unrar, and dependencies for curl-impersonate
+# Install tools: aria2c, unrar, curl-impersonate, ffmpeg, 7z, zip
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         aria2 \
@@ -10,6 +10,10 @@ RUN apt-get update && \
         libnss3 \
         libnghttp2-14 \
         libbrotli1 \
+        ffmpeg \
+        p7zip-full \
+        zip \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install curl-impersonate (Chrome version)
@@ -43,10 +47,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application modules
+COPY config.py .
+COPY database.py .
+COPY models.py .
+COPY auth.py .
 COPY main.py .
+COPY routers/ ./routers/
+COPY services/ ./services/
 COPY static/ ./static/
 
-RUN mkdir -p /downloads
+RUN mkdir -p /downloads /data
 
 EXPOSE 8000
 

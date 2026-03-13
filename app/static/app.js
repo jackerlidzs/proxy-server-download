@@ -1,0 +1,429 @@
+/* Download Proxy + Media Server v5.0 - Frontend JS */
+let K=localStorage.getItem('dp_key')||'',U=localStorage.getItem('dp_url')||'',poll=null,hasAct=false;
+let fmCurPath='',fmViewMode='grid',fmAllItems=[],fmSelected=new Set(),renameTarget='';
+let trashCount=0,currentUser=localStorage.getItem('dp_user')||'',currentRole=localStorage.getItem('dp_role')||'';
+
+document.addEventListener('DOMContentLoaded',()=>{
+  if(!K)showAuth();else init();
+  document.getElementById('aKey').addEventListener('keypress',e=>{if(e.key==='Enter')auth()});
+  const uz=document.getElementById('uploadZone');
+  ['dragenter','dragover'].forEach(e=>uz.addEventListener(e,ev=>{ev.preventDefault();uz.classList.add('drag')}));
+  ['dragleave','drop'].forEach(e=>uz.addEventListener(e,ev=>{ev.preventDefault();uz.classList.remove('drag')}));
+  uz.addEventListener('drop',ev=>fmUpload(ev.dataTransfer.files));
+});
+
+function base(){return(U||location.origin).replace(/\/$/,'')}
+function showAuth(){document.getElementById('authM').style.display='flex';document.getElementById('aKey').focus()}
+function auth(){
+  K=document.getElementById('aKey').value.trim();
+  U=document.getElementById('aUrl').value.trim();
+  if(!K){toast('Enter API key','err');return}
+  localStorage.setItem('dp_key',K);localStorage.setItem('dp_url',U);
+  currentUser='api_key';currentRole='admin';localStorage.setItem('dp_user','api_key');localStorage.setItem('dp_role','admin');
+  document.getElementById('authM').style.display='none';updateUserUI();init();
+}
+async function jwtLogin(){
+  const u=document.getElementById('jwtUser').value.trim();
+  const p=document.getElementById('jwtPass').value.trim();
+  U=document.getElementById('jwtUrl').value.trim();
+  if(!u||!p){toast('Enter username and password','err');return}
+  try{
+    const r=await fetch((U||location.origin).replace(/\/$/,'')+'/api/admin/login',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:u,password:p})
+    });
+    if(!r.ok){const e=await r.json().catch(()=>({}));toast(e.detail||'Login failed','err');return}
+    const d=await r.json();
+    K=d.token;currentUser=d.username;currentRole=d.role;
+    localStorage.setItem('dp_key',K);localStorage.setItem('dp_url',U);
+    localStorage.setItem('dp_user',d.username);localStorage.setItem('dp_role',d.role);
+    document.getElementById('authM').style.display='none';
+    toast(`Welcome ${d.username} (${d.role})`,'ok');updateUserUI();init();
+  }catch(e){toast('Login failed: '+e.message,'err')}
+}
+function logout(){
+  K='';U='';currentUser='';currentRole='';
+  localStorage.removeItem('dp_key');localStorage.removeItem('dp_url');
+  localStorage.removeItem('dp_user');localStorage.removeItem('dp_role');
+  showAuth();
+}
+function updateUserUI(){
+  const el=document.getElementById('userInfo');
+  if(el&&currentUser)el.innerHTML=`<span style="font-size:11px;color:var(--txt2)">${esc(currentUser)} <span style="color:var(--grn);font-weight:600">${currentRole}</span></span> <button class="cp" onclick="logout()" style="font-size:10px" title="Logout">🚪</button>`;
+}
+function init(){health();rAll();rFiles();rMedia();startPoll();updateUserUI()}
+function startPoll(){if(poll)clearInterval(poll);poll=setInterval(()=>{rAll();health()},hasAct?1500:5000)}
+
+async function api(m,p,b){
+  const o={method:m,headers:{'Authorization':'Bearer '+K}};
+  if(b&&!(b instanceof FormData)){o.headers['Content-Type']='application/json';o.body=JSON.stringify(b)}
+  else if(b instanceof FormData){o.body=b}
+  const r=await fetch(base()+p,o);
+  if(r.status===401||r.status===403){showAuth();throw new Error('Unauthorized')}
+  if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(typeof e.detail==='object'?e.detail.error||JSON.stringify(e.detail):e.detail||'Failed')}
+  return r.json();
+}
+
+async function health(){
+  try{
+    const d=await api('GET','/health');
+    document.getElementById('sDot').className='tb-dot';
+    document.getElementById('sTxt').textContent='v'+d.version;
+    document.getElementById('sDisk').textContent=d.disk_free_gb??'--';
+    document.getElementById('sFiles').textContent=d.files_count??0;
+    trashCount=d.trash_count||0;
+    const tb=document.getElementById('trashBadge');
+    if(tb){tb.textContent=trashCount;tb.style.display=trashCount?'inline':'none'}
+    if(d.disk_total_gb&&d.disk_used_gb){
+      const pct=(d.disk_used_gb/d.disk_total_gb*100).toFixed(0);
+      document.getElementById('diskBar').style.width=pct+'%';
+      document.getElementById('diskUsed').textContent=d.disk_used_gb.toFixed(1)+' GB';
+      document.getElementById('diskTotal').textContent=d.disk_total_gb.toFixed(0)+' GB';
+    }
+  }catch{document.getElementById('sDot').className='tb-dot off';document.getElementById('sTxt').textContent='Offline'}
+}
+
+// Nav
+function go(page,el){
+  document.querySelectorAll('.sb-item').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('p-'+page).classList.add('active');
+  const titles={dl:'Downloads',fm:'File Manager',media:'Media',trash:'Recycle Bin',dedup:'Deduplication',share:'Share Links'};
+  document.getElementById('pageTitle').textContent=titles[page]||'';
+  if(page==='fm')rFiles();
+  if(page==='media')rMedia();
+  if(page==='trash')rTrash();
+  if(page==='dedup')rDedup();
+  if(page==='share')rShares();
+}
+function stab(n,el){
+  el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  const container=el.closest('.card-b')||el.closest('.modal');
+  if(container)container.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');document.getElementById('tab-'+n).classList.add('active');
+}
+
+// Downloads
+async function subUrl(){
+  const url=document.getElementById('dlUrl').value.trim();
+  if(!url){toast('Enter URL','err');return}
+  let h={};const ht=document.getElementById('dlH').value.trim();
+  if(ht){try{h=JSON.parse(ht)}catch{toast('Invalid JSON','err');return}}
+  const fn=document.getElementById('dlFn').value.trim()||undefined;
+  const eng=document.getElementById('dlEng').value;
+  const b=document.getElementById('bUrl');b.disabled=true;b.innerHTML='<span class="spin"></span>';
+  try{const d=await api('POST','/api/download',{url,headers:h,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlUrl').value='';document.getElementById('dlH').value='';rAll()}
+  catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
+}
+async function subCurl(){
+  const cmd=document.getElementById('dlCurl').value.trim();
+  if(!cmd){toast('Paste cURL','err');return}
+  const fn=document.getElementById('dlCFn').value.trim()||undefined;
+  const eng=document.getElementById('dlCE').value;
+  const b=document.getElementById('bCurl');b.disabled=true;b.innerHTML='<span class="spin"></span>';
+  try{const d=await api('POST','/api/download',{url:'p',curl_command:cmd,filename:fn,engine:eng});toast('Started: '+d.filename,'ok');document.getElementById('dlCurl').value='';rAll()}
+  catch(e){toast(e.message,'err')}finally{b.disabled=false;b.innerHTML='⬇ Download'}
+}
+
+async function rAll(){
+  try{const d=await api('GET','/api/downloads');renderDL(d.downloads||[])}catch{}
+}
+function renderDL(items){
+  const el=document.getElementById('dlList');
+  const act=items.filter(i=>['downloading','queued','extracting','compressing'].includes(i.status)).length;
+  const done=items.filter(i=>i.status==='completed').length;
+  document.getElementById('sAct').textContent=act;document.getElementById('sDone').textContent=done;
+  const w=hasAct;hasAct=act>0;if(hasAct!==w)startPoll();
+  if(!items.length){el.innerHTML='<div class="empty"><span>📭</span>No downloads</div>';return}
+  const ord={downloading:0,extracting:1,compressing:1,queued:2,completed:3,failed:4};
+  items.sort((a,b)=>(ord[a.status]??5)-(ord[b.status]??5)||(b.created_at||'').localeCompare(a.created_at||''));
+  el.innerHTML=items.map(d=>{
+    const sc={queued:'st-q',downloading:'st-d',completed:'st-c',failed:'st-f',extracting:'st-e',compressing:'st-e'};
+    const pct=d.percent||0;const isA=d.status==='downloading'||d.status==='extracting'||d.status==='compressing';
+    const eng=d.engine||'';const eH=eng.includes('curl')?'<span class="eng eng-c">curl</span>':eng.includes('aria')?'<span class="eng eng-a">aria2c</span>':'';
+    let pH='';
+    if(isA)pH=`<div class="prog"><div class="prog-f on" style="width:${pct}%"></div></div><div class="dl-pi"><span>${pct.toFixed(1)}% · ${hs(d.downloaded||0)}${d.total_size?' / '+hs(d.total_size):''}</span><span class="dl-spd">${d.speed||'...'}</span></div>`;
+    else if(d.status==='completed')pH='<div class="prog"><div class="prog-f" style="width:100%"></div></div>';
+    let aH='';if(d.status==='completed'&&d.download_url)aH=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpL('${d.download_url}')">📋</button>`;
+    let eR='';if(d.status==='failed'&&d.error)eR=`<div style="font-size:10px;color:var(--red);margin-top:4px;word-break:break-all">❌ ${esc(d.error.substring(0,150))}</div>`;
+    const sz=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
+    const t=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
+    const ic={extracting:'📦',compressing:'🗜️'}[d.status]||'📄';
+    return`<div class="dl-i"><div class="dl-top"><div class="dl-name">${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
+  }).join('');
+}
+
+// File Manager
+async function rFiles(){
+  try{const d=await api('GET','/api/files?path='+encodeURIComponent(fmCurPath));fmAllItems=d.items||[];renderFM()}catch(e){console.error(e)}
+}
+function renderFM(){
+  fmSelected.clear();document.getElementById('fmBulkDel').style.display='none';
+  document.getElementById('fmBulkCompress').style.display='none';
+  const pathEl=document.getElementById('fmPath');
+  let crumbs='<span class="fm-crumb'+(fmCurPath?'':' current')+'" onclick="fmGo(\'\')">📁 /</span>';
+  if(fmCurPath){
+    const parts=fmCurPath.split('/');let acc='';
+    parts.forEach((p,i)=>{acc+=(i?'/':'')+p;const a=acc;crumbs+=`<span class="fm-sep">›</span><span class="fm-crumb${i===parts.length-1?' current':''}" onclick="fmGo('${a}')">${esc(p)}</span>`});
+  }
+  pathEl.innerHTML=crumbs;
+  let items=fmAllItems;
+  const q=document.getElementById('fmSearch').value.toLowerCase();
+  if(q)items=items.filter(f=>f.name.toLowerCase().includes(q));
+  const el=document.getElementById('fmContent');
+  if(!items.length){el.innerHTML='<div class="empty"><span>📂</span>Empty folder</div>';return}
+  const icons={folder:'📁',video:'🎬',audio:'🎵',subtitle:'🔤',archive:'📦',image:'🖼',file:'📄'};
+  if(fmViewMode==='grid'){
+    el.innerHTML='<div class="fm-grid">'+items.map(f=>{
+      const ic=icons[f.type]||'📄';
+      const click=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`:f.download_url?`ondblclick="window.open('${f.download_url}')"`:'';
+      const archBtn=f.type==='archive'?`<button class="btn-o" style="position:absolute;bottom:4px;right:4px;font-size:9px;padding:2px 5px" onclick="event.stopPropagation();extractF('${esc(f.path)}')">📦</button>`:'';
+      return`<div class="fm-item" onclick="fmSel(this,'${esc(f.path)}')" ${click} data-path="${esc(f.path)}"><div class="fm-check">✓</div><span class="fm-icon">${ic}</span><div class="fm-fname">${esc(f.name)}</div><div class="fm-fsize">${f.size_human}${f.items!=null?' · '+f.items+' items':''}</div>${archBtn}</div>`;
+    }).join('')+'</div>';
+  }else{
+    el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div>Name</div><div>Size</div><div>Type</div><div></div></div>`+items.map(f=>{
+      const ic=icons[f.type]||'📄';
+      const click=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:''
+      let btns='';
+      if(f.type!=='folder'){
+        btns+=`<button class="cp" onclick="event.stopPropagation();showDetail('${esc(f.path)}')" title="Info">ℹ️</button>`;
+        btns+=`<button class="cp" onclick="event.stopPropagation();showRename('${esc(f.path)}','${esc(f.name)}')" title="Rename">✏️</button>`;
+        if(f.type==='archive')btns+=`<button class="cp" onclick="event.stopPropagation();extractF('${esc(f.path)}')" title="Extract" style="color:var(--orn)">📦</button>`;
+        btns+=`<button class="cp" onclick="event.stopPropagation();shareFile('${esc(f.path)}')" title="Share" style="color:#a78bfa">🔗</button>`;
+        if(f.download_url)btns+=`<button class="cp" onclick="event.stopPropagation();cpL('${f.download_url}')" title="Copy link">📋</button>`;
+        btns+=`<button class="cp" onclick="event.stopPropagation();delF('${esc(f.path)}')" style="color:var(--red)" title="Delete">🗑</button>`;
+      }
+      return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${click} data-path="${esc(f.path)}"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div><div>${btns}</div></div>`;
+    }).join('')+'</div>';
+  }
+}
+function fmGo(path){fmCurPath=path;rFiles()}
+function fmFilter(){renderFM()}
+function fmToggleView(){fmViewMode=fmViewMode==='grid'?'list':'grid';document.getElementById('fmViewBtn').textContent=fmViewMode==='grid'?'☰':'▦';renderFM()}
+function fmSel(el,path){
+  if(fmSelected.has(path)){fmSelected.delete(path);el.classList.remove('selected')}
+  else{fmSelected.add(path);el.classList.add('selected')}
+  const cnt=fmSelected.size;
+  document.getElementById('fmBulkDel').style.display=cnt?'inline-flex':'none';
+  document.getElementById('fmBulkCompress').style.display=cnt?'inline-flex':'none';
+}
+async function fmMkdir(){
+  const name=prompt('Folder name:');if(!name)return;
+  try{await api('POST','/api/files/mkdir?path='+encodeURIComponent(fmCurPath),{name});toast('Created '+name,'ok');rFiles()}
+  catch(e){toast(e.message,'err')}
+}
+async function fmBulkDel(){
+  if(!confirm(`Delete ${fmSelected.size} items? (moved to Recycle Bin)`))return;
+  try{await api('POST','/api/files/delete-bulk',{filenames:[...fmSelected]});toast(`Deleted ${fmSelected.size} items`,'ok');rFiles();rMedia();health()}
+  catch(e){toast(e.message,'err')}
+}
+async function fmBulkCompress(){
+  const name=prompt('Archive name (e.g. files.zip):','archive.zip');if(!name)return;
+  const fmt=name.endsWith('.tar.gz')||name.endsWith('.tgz')?'tar.gz':'zip';
+  try{await api('POST','/api/compress',{filenames:[...fmSelected],archive_name:name,format:fmt});toast('Compression started','ok');rAll()}
+  catch(e){toast(e.message,'err')}
+}
+async function fmUpload(files){
+  if(!files||!files.length)return;
+  for(const f of files){
+    const fd=new FormData();fd.append('file',f);fd.append('path',fmCurPath);
+    try{await api('POST','/api/upload',fd);toast('Uploaded '+f.name,'ok')}
+    catch(e){toast('Upload failed: '+e.message,'err')}
+  }
+  rFiles();
+}
+function showRename(path,name){
+  renameTarget=path;
+  document.getElementById('renameM').style.display='flex';
+  document.getElementById('renameOld').textContent='Rename: '+name;
+  document.getElementById('renameIn').value=name;
+  document.getElementById('renameIn').select();
+}
+function closeRename(){document.getElementById('renameM').style.display='none'}
+async function doRename(){
+  const nn=document.getElementById('renameIn').value.trim();
+  if(!nn){toast('Enter name','err');return}
+  try{await api('POST','/api/files/rename/'+encodeURIComponent(renameTarget),{new_name:nn});toast('Renamed','ok');closeRename();rFiles()}
+  catch(e){toast(e.message,'err')}
+}
+async function delF(path){
+  if(!confirm('Delete '+path+'? (moved to Recycle Bin)'))return;
+  try{await api('DELETE','/api/files/'+encodeURIComponent(path));toast('Moved to trash','ok');rFiles();rMedia();health()}
+  catch(e){toast(e.message,'err')}
+}
+
+// Extract
+async function extractF(path){
+  const del=confirm('Delete archive files after extraction?');
+  try{const r=await api('POST','/api/extract/'+encodeURIComponent(path),{delete_after:del});toast(r.message||'Extraction started','ok');rAll()}
+  catch(e){toast(e.message,'err')}
+}
+
+// Detail Panel
+async function showDetail(path){
+  const p=document.getElementById('detailPanel');
+  p.innerHTML='<h3>ℹ️ File Info <button class="cp" onclick="closeDetail()" style="font-size:14px">✕</button></h3><div class="empty"><span class="spin"></span></div>';
+  p.classList.add('open');
+  try{
+    const info=await api('GET','/api/files/info/'+encodeURIComponent(path));
+    let html='<h3>ℹ️ File Info <button class="cp" onclick="closeDetail()" style="font-size:14px">✕</button></h3>';
+    html+=`<div class="detail-row"><span class="label">Path</span><span class="value">${esc(info.path)}</span></div>`;
+    html+=`<div class="detail-row"><span class="label">MIME</span><span class="value">${esc(info.mime_type||'—')}</span></div>`;
+    html+=`<div class="detail-row"><span class="label">Size</span><span class="value">${hs(info.size)}</span></div>`;
+    html+=`<div class="detail-row"><span class="label">MD5</span><span class="value">${esc(info.hash_md5||'Not computed')}</span></div>`;
+    html+=`<div class="detail-row"><span class="label">Created</span><span class="value">${info.created_at?new Date(info.created_at).toLocaleString():'—'}</span></div>`;
+    html+=`<div class="detail-row"><span class="label">Modified</span><span class="value">${info.modified_at?new Date(info.modified_at).toLocaleString():'—'}</span></div>`;
+    if(info.tags&&info.tags.length)html+=`<div class="detail-row"><span class="label">Tags</span><span class="value">${info.tags.join(', ')}</span></div>`;
+    // Versions
+    try{
+      const v=await api('GET','/api/files/versions/'+encodeURIComponent(path));
+      if(v.versions&&v.versions.length){
+        html+='<h3 style="margin-top:16px;font-size:13px">📋 Versions ('+v.total+')</h3>';
+        v.versions.forEach(ver=>{
+          html+=`<div class="detail-row"><span class="label">v${ver.version} · ${hs(ver.size)}</span><span class="value"><button class="btn-g" onclick="restoreVer('${esc(path)}',${ver.version})">Restore</button></span></div>`;
+        });
+      }
+    }catch{}
+    p.innerHTML=html;
+  }catch(e){p.innerHTML='<h3>Error <button class="cp" onclick="closeDetail()">✕</button></h3><p>'+esc(e.message)+'</p>'}
+}
+function closeDetail(){document.getElementById('detailPanel').classList.remove('open')}
+async function restoreVer(path,v){
+  if(!confirm(`Restore version ${v}?`))return;
+  try{await api('POST','/api/files/restore-version/'+encodeURIComponent(path)+'?version='+v);toast('Version restored','ok');rFiles();closeDetail()}
+  catch(e){toast(e.message,'err')}
+}
+
+// Recycle Bin
+async function rTrash(){
+  try{
+    const d=await api('GET','/api/trash');
+    const el=document.getElementById('trashList');
+    const items=d.items||[];
+    if(!items.length){el.innerHTML='<div class="empty"><span>♻️</span>Recycle bin is empty</div>';return}
+    el.innerHTML=items.map(t=>`<div class="trash-item"><div class="trash-info"><div class="trash-name">📄 ${esc(t.filename)}</div><div class="trash-meta">${hs(t.size)} · Deleted ${new Date(t.deleted_at).toLocaleString()} · Expires ${new Date(t.expires_at).toLocaleDateString()}</div></div><div class="trash-actions"><button class="btn-g" onclick="trashRestore(${t.id})">♻️ Restore</button><button class="btn-d" onclick="trashPurge(${t.id})">🗑 Delete</button></div></div>`).join('');
+  }catch(e){console.error(e)}
+}
+async function trashRestore(id){
+  try{await api('POST','/api/trash/restore/'+id);toast('Restored','ok');rTrash();rFiles();health()}
+  catch(e){toast(e.message,'err')}
+}
+async function trashPurge(id){
+  if(!confirm('Permanently delete?'))return;
+  try{await api('DELETE','/api/trash/'+id);toast('Permanently deleted','ok');rTrash();health()}
+  catch(e){toast(e.message,'err')}
+}
+async function trashPurgeAll(){
+  if(!confirm('Permanently delete ALL items in recycle bin?'))return;
+  try{await api('DELETE','/api/trash/purge');toast('Trash emptied','ok');rTrash();health()}
+  catch(e){toast(e.message,'err')}
+}
+
+// Dedup
+async function rDedup(){
+  const el=document.getElementById('dedupContent');
+  el.innerHTML='<div class="empty"><span class="spin"></span> Scanning files...</div>';
+  try{
+    const d=await api('GET','/api/dedup/scan');
+    if(!d.duplicate_groups||!d.duplicate_groups.length){
+      el.innerHTML='<div class="empty"><span>✅</span>No duplicate files found</div>';return;
+    }
+    let html=`<div style="padding:12px;font-size:13px;color:var(--ylw);background:var(--ylw3);border-radius:var(--rs);margin-bottom:12px">⚠️ Found ${d.total_groups} duplicate groups · Wasted: ${d.total_wasted_human}<button class="btn-d" style="margin-left:auto;float:right" onclick="dedupClean()">🧹 Clean All</button></div>`;
+    html+=d.duplicate_groups.map(g=>`<div class="dedup-group"><div class="dedup-group-header"><span>🔗 ${g.count} files · ${g.size_human} each</span><span style="color:var(--red)">Wasted: ${g.wasted_human}</span></div>${g.files.map(f=>`<div class="dedup-file">📄 ${esc(f)}</div>`).join('')}</div>`).join('');
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<div class="empty">Error: '+esc(e.message)+'</div>'}
+}
+async function dedupClean(){
+  if(!confirm('Remove duplicate files? (keeps one copy)'))return;
+  try{const r=await api('POST','/api/dedup/clean?strategy=first');toast(`Removed ${r.deleted_count} files · Freed ${r.freed_human}`,'ok');rDedup();rFiles();health()}
+  catch(e){toast(e.message,'err')}
+}
+
+// Media
+async function rMedia(){
+  try{const d=await api('GET','/api/media');renderM(d.media||[])}catch{}
+}
+function renderM(items){
+  const el=document.getElementById('mediaList');
+  if(!items.length){el.innerHTML='<div class="empty"><span>🎬</span>No media files yet</div>';return}
+  el.innerHTML=items.map(m=>{
+    const isV=m.type==='video';const ic=isV?'🎬':'🎵';
+    const badge=isV?'<span class="mc-badge mc-vid">VIDEO</span>':'<span class="mc-badge mc-aud">AUDIO</span>';
+    const subH=m.subtitles?.length?`<span>🔤 ${m.subtitles.length} sub</span>`:'';
+    const hlsS=m.hls?m.hls.status:'none';
+    let hlsBtn='';
+    if(isV){
+      if(hlsS==='ready')hlsBtn=`<button class="btn-g" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();playHls('${esc(m.filename)}','${m.hls.master_url}',${JSON.stringify(m.subtitles||[]).replace(/"/g,'&quot;')})">▶ HLS</button>`;
+      else if(hlsS==='transcoding')hlsBtn=`<div style="font-size:10px;color:var(--ylw);margin-top:4px"><span class="spin"></span> Transcoding ${m.hls.progress?.percent||0}%</div>`;
+      else hlsBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();startHls('${esc(m.path)}')">📡 Create HLS</button>`;
+    }
+    let shareBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px;margin-left:4px" onclick="event.stopPropagation();shareFile('${esc(m.path)}')">🔗 Share</button>`;
+    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playM('${esc(m.filename)}','${m.stream_url}',${JSON.stringify(m.subtitles||[]).replace(/"/g,'&quot;')})"><div class="mc-top"><div class="mc-icon">${ic}</div>${badge}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
+  }).join('');
+}
+let hlsPlayer=null;
+function playM(name,url,subs){
+  if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}
+  const v=document.getElementById('vp');const e=document.getElementById('playerE');const n=document.getElementById('nowP');
+  v.querySelectorAll('track').forEach(t=>t.remove());
+  v.src=url;v.style.display='block';e.style.display='none';
+  n.style.display='flex';n.innerHTML='🎬 <strong>'+esc(name)+'</strong> <button class="btn-s" style="margin-left:auto" onclick="window.open(\''+url+'\')">↗ Open</button>';
+  if(subs&&subs.length)subs.forEach((s,i)=>{const t=document.createElement('track');t.kind='subtitles';t.label=s.filename;t.src=s.url;if(i===0)t.default=true;v.appendChild(t)});
+  v.play().catch(()=>{});
+  document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
+  const c=document.getElementById('mc-'+name);if(c)c.classList.add('playing');
+  document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
+}
+function loadHlsLib(){return new Promise((res,rej)=>{if(window.Hls)return res();const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/hls.js@latest';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+async function playHls(name,masterUrl,subs){
+  try{await loadHlsLib()}catch{toast('Failed to load HLS.js','err');return}
+  if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}
+  const v=document.getElementById('vp');const e=document.getElementById('playerE');const n=document.getElementById('nowP');
+  v.querySelectorAll('track').forEach(t=>t.remove());
+  v.style.display='block';e.style.display='none';
+  n.style.display='flex';n.innerHTML='📡 <strong>'+esc(name)+' (HLS)</strong> <span style="color:var(--grn);font-size:11px">Adaptive</span>';
+  if(Hls.isSupported()){hlsPlayer=new Hls();hlsPlayer.loadSource(masterUrl);hlsPlayer.attachMedia(v);hlsPlayer.on(Hls.Events.MANIFEST_PARSED,()=>v.play().catch(()=>{}))};
+  if(subs&&subs.length)subs.forEach((s,i)=>{const t=document.createElement('track');t.kind='subtitles';t.label=s.filename;t.src=s.url;if(i===0)t.default=true;v.appendChild(t)});
+  document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
+  const c=document.getElementById('mc-'+name);if(c)c.classList.add('playing');
+  document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
+}
+async function startHls(path){
+  try{const r=await api('POST','/api/media/hls/'+encodeURIComponent(path));toast('HLS transcoding '+r.status,'ok');setTimeout(()=>rMedia(),2000)}
+  catch(e){toast(e.message,'err')}
+}
+
+// Share
+async function shareFile(filepath){
+  const hours=prompt('Expire in hours (0=never):','24');
+  if(hours===null)return;
+  const pw=prompt('Password (leave empty for none):','');
+  try{const r=await api('POST','/api/share',{filepath,expire_hours:parseInt(hours)||0,password:pw||null});cpL(r.url);toast('Share link copied: '+r.url,'ok')}
+  catch(e){toast(e.message,'err')}
+}
+async function rShares(){
+  try{
+    const d=await api('GET','/api/shares');
+    const el=document.getElementById('shareList');
+    const items=d.shares||[];
+    if(!items.length){el.innerHTML='<div class="empty"><span>🔗</span>No share links</div>';return}
+    el.innerHTML=items.map(s=>`<div class="trash-item"><div class="trash-info"><div class="trash-name">🔗 ${esc(s.file_path)}</div><div class="trash-meta">${s.password_protected?'🔒 ':''}Downloads: ${s.download_count}${s.max_downloads?' / '+s.max_downloads:''} · Created ${new Date(s.created_at).toLocaleString()}${s.expires_at?' · Expires '+new Date(s.expires_at).toLocaleString():' · Never expires'}</div></div><div class="trash-actions"><button class="btn-s" onclick="cpL('${s.url}')">📋 Copy</button><button class="btn-d" onclick="delShare('${s.token}')">🗑</button></div></div>`).join('');
+  }catch(e){console.error(e)}
+}
+async function delShare(token){
+  if(!confirm('Delete share link?'))return;
+  try{await api('DELETE','/api/share/'+token);toast('Share deleted','ok');rShares()}
+  catch(e){toast(e.message,'err')}
+}
+
+// Utils
+function cpL(u){navigator.clipboard.writeText(u).then(()=>toast('Copied!','info'))}
+function hs(b){if(!b)return'0 B';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return b.toFixed(1)+' '+u[i]}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function toast(m,t='info'){
+  const w=document.getElementById('toasts');const c=t==='ok'?'t-ok':t==='err'?'t-err':'t-info';
+  const i=t==='ok'?'✓':t==='err'?'✕':'ℹ';const e=document.createElement('div');e.className='toast '+c;
+  e.innerHTML=`<span>${i}</span> ${esc(m)}`;w.appendChild(e);
+  setTimeout(()=>{e.style.animation='sIn .2s ease reverse';setTimeout(()=>e.remove(),200)},3000);
+}
