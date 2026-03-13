@@ -295,26 +295,71 @@ async function delF(path){
 }
 
 // Extract
+let _extPollId=null;
 async function extractF(path){
   const name=path.split('/').pop().toLowerCase();
   const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
+  let extractPath=path;
   if(partMatch){
     const group=partMatch[1];const partNum=parseInt(partMatch[2]);
     const dir=path.substring(0,path.length-name.length);
-    const part1Path=dir+group+'.part1.rar';
+    extractPath=dir+group+'.part1.rar';
     try{
       const check=await api('POST','/api/extract/check/'+encodeURIComponent(path));
       if(check.is_multipart&&!check.complete){toast(`Missing parts: ${check.missing_files.join(', ')}`,'err');return}
     }catch(e){}
-    if(partNum!==1)toast('Redirecting to part1 for extraction...','info');
-    const del=await dlgConfirm('📦 Extract','Delete archive files after extraction?');
-    try{const r=await api('POST','/api/extract/'+encodeURIComponent(part1Path),{delete_after:del});toast(r.message||'Extraction started','ok');rFiles()}
-    catch(e){toast(e.message,'err')}
-  }else{
-    const del=await dlgConfirm('📦 Extract','Delete archive files after extraction?');
-    try{const r=await api('POST','/api/extract/'+encodeURIComponent(path),{delete_after:del});toast(r.message||'Extraction started','ok');rFiles()}
-    catch(e){toast(e.message,'err')}
+    if(partNum!==1)toast('Using part1 for extraction...','info');
   }
+  const del=await dlgConfirm('📦 Extract Archive','Delete archive files after extraction?');
+  try{
+    const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),{delete_after:del});
+    toast(r.message||'Extraction started','ok');
+    startExtractPoll();
+  }catch(e){toast(e.message,'err')}
+}
+function startExtractPoll(){
+  if(_extPollId)return;
+  renderExtractBanner();
+  _extPollId=setInterval(async()=>{
+    try{
+      const d=await api('GET','/api/extract-tasks');
+      const tasks=d.tasks||[];
+      const active=tasks.filter(t=>t.status==='extracting');
+      renderExtractBanner(tasks);
+      if(!active.length){
+        clearInterval(_extPollId);_extPollId=null;
+        setTimeout(()=>{
+          const el=document.getElementById('extractBanner');
+          if(el)el.innerHTML='';
+          rFiles();
+        },2000);
+      }
+    }catch(e){clearInterval(_extPollId);_extPollId=null}
+  },2000);
+}
+function renderExtractBanner(tasks){
+  let el=document.getElementById('extractBanner');
+  if(!el){
+    const c=document.getElementById('fmContent');
+    el=document.createElement('div');el.id='extractBanner';
+    c.parentNode.insertBefore(el,c);
+  }
+  if(!tasks||!tasks.length){el.innerHTML='';return}
+  el.innerHTML=tasks.map(t=>{
+    const sc={extracting:'st-dl',completed:'st-ok',failed:'st-err'}[t.status]||'st-q';
+    const ic=t.status==='completed'?'✅':t.status==='failed'?'❌':'📦';
+    const pct=t.percent||0;
+    const bar=t.status==='extracting'?`<div class="pb"><div class="pf" style="width:${pct}%"></div></div>`:'';
+    const dest=t.destination?`→ 📁 ${esc(t.destination)}`:'';
+    return`<div style="background:var(--bg3);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:12px;font-weight:600">${ic} ${esc(t.filename)}</span>
+        <span class="st ${sc}" style="font-size:11px">${t.status}</span>
+      </div>
+      ${bar}
+      <div style="font-size:11px;color:var(--txt3);margin-top:2px">${t.progress||''} ${dest}</div>
+    </div>`;
+  }).join('');
 }
 
 // Detail Panel

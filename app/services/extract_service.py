@@ -60,8 +60,8 @@ def check_parts(filename: str, directory: Path) -> dict:
 
 
 async def extract_archive(filename: str, delete_after: bool = False,
-                           base_dir: Path = None) -> dict:
-    """Extract an archive file. Runs in background, returns task_id."""
+                           base_dir: Path = None, destination: str = None) -> dict:
+    """Extract an archive file. Extracts to subfolder by default (filebrowser-style)."""
     base_dir = base_dir or DOWNLOAD_DIR
     fp = base_dir / filename
 
@@ -94,16 +94,41 @@ async def extract_archive(filename: str, delete_after: bool = False,
                     fp = part1
                     filename = str(part1.relative_to(base_dir))
 
+    # Determine output directory (filebrowser-style: extract to subfolder)
+    if destination:
+        out_dir = base_dir / destination
+    else:
+        # Create subfolder based on archive name (strip extensions)
+        stem = fp.stem
+        # Handle .tar.gz, .tar.bz2 etc.
+        if stem.lower().endswith('.tar'):
+            stem = stem[:-4]
+        # For multi-part RAR, use the group name
+        if group:
+            stem = group
+        # Handle .partN suffix for RAR
+        part_m = re.match(r'^(.+?)\.part\d+$', stem, re.IGNORECASE)
+        if part_m:
+            stem = part_m.group(1)
+        out_dir = fp.parent / stem
+        # If a file with same name exists, add suffix
+        if out_dir.exists() and out_dir.is_file():
+            out_dir = fp.parent / f"{stem}_extracted"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     extract_tasks[eid] = {
         "task_id": eid, "status": "extracting", "filename": fp.name,
         "group": group, "progress": "Starting...", "percent": 0,
+        "destination": str(out_dir.relative_to(base_dir)),
         "created_at": datetime.now().isoformat()
     }
 
     # Run extraction in background
-    asyncio.create_task(_run_extract(fp, ext, name_lower, base_dir, eid, group, delete_after))
+    asyncio.create_task(_run_extract(fp, ext, name_lower, out_dir, eid, group, delete_after))
 
-    return {"success": True, "task_id": eid, "message": f"Extraction started for {fp.name}"}
+    return {"success": True, "task_id": eid, "message": f"Extracting to {out_dir.name}/",
+            "destination": str(out_dir.relative_to(base_dir))}
 
 
 async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
