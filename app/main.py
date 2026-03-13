@@ -108,7 +108,11 @@ app.include_router(media_router)
 app.include_router(admin_router)
 app.include_router(share_router)
 
-# Mount static files (CSS, JS)
+# Ensure directories exist before mounting
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+HLS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Mount static files (CSS, JS) and HLS segments
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/hls", StaticFiles(directory=str(HLS_DIR)), name="hls")
 
