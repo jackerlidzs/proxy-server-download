@@ -16,6 +16,14 @@ downloads: dict = {}
 _processes: dict = {}  # tid -> subprocess for cancel/kill
 semaphore: asyncio.Semaphore = None
 
+# Default browser headers for sites that check User-Agent / Accept
+DEFAULT_HEADERS = {
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.9",
+    "accept-encoding": "gzip, deflate, br",
+}
+
 
 def init_semaphore():
     global semaphore
@@ -123,12 +131,14 @@ async def monitor_progress(tid, fp, total=0):
 async def dl_curl(tid, url, headers, filename, resume=False):
     fp = DOWNLOAD_DIR / filename
     total = 0
+    # Merge default browser headers (user headers override defaults)
+    merged = {**DEFAULT_HEADERS, **{k.lower(): v for k, v in headers.items()}}
 
     # Get content-length and content-type for progress + validation
     ct_type = ""
     try:
         hcmd = ["curl_chrome", "-L", "-s", "-S", "-I", "--max-redirs", "10", "--connect-timeout", "15"]
-        for k, v in headers.items():
+        for k, v in merged.items():
             hcmd.extend(["-H", f"{k}: {v}"])
         hcmd.append(url)
         p = await asyncio.create_subprocess_exec(*hcmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -150,7 +160,7 @@ async def dl_curl(tid, url, headers, filename, resume=False):
     # Resume support
     if resume and fp.exists():
         cmd.extend(["-C", "-"])
-    for k, v in headers.items():
+    for k, v in merged.items():
         cmd.extend(["-H", f"{k}: {v}"])
     cmd.append(url)
 
@@ -208,10 +218,12 @@ async def dl_curl(tid, url, headers, filename, resume=False):
 
 async def dl_aria2c(tid, url, headers, filename, conns, resume=False):
     fp = DOWNLOAD_DIR / filename
+    # Merge default browser headers
+    merged = {**DEFAULT_HEADERS, **{k.lower(): v for k, v in headers.items()}}
     cmd = ["aria2c", "-x", str(conns), "-s", str(conns), "-k", "1M", "-m", "5", "--retry-wait=3",
            "-t", "60", "--connect-timeout=30", "-c", "--auto-file-renaming=false", "--allow-overwrite=true",
            "-d", str(DOWNLOAD_DIR), "-o", filename, "--summary-interval=1", "--file-allocation=none"]
-    for k, v in headers.items():
+    for k, v in merged.items():
         cmd.extend(["--header", f"{k}: {v}"])
     cmd.append(url)
     try:
