@@ -389,7 +389,7 @@ function startExtractPoll(){
         },3000);
       }
     }catch(e){clearInterval(_extPollId);_extPollId=null}
-  },1500);
+  },1000);
 }
 async function cancelExtract(eid){
   try{await api('DELETE','/api/extract-tasks/'+eid);toast('Extraction cancelled','ok')}catch(e){toast(e.message,'err')}
@@ -413,6 +413,8 @@ function renderExtractBanner(tasks){
     // Progress info line
     let infoLine=t.progress||'';
     if(isActive&&t.elapsed)infoLine+=` · ⏱ ${t.elapsed}`;
+    // Error detail
+    const errLine=t.error?`<div style="font-size:11px;color:var(--red);margin-top:4px;word-break:break-all">⚠ ${esc(t.error)}</div>`:'';
     // Progress bar
     const bar=isActive||t.status==='cancelled'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;transition:width .3s;${isActive?'background:linear-gradient(90deg,var(--pri),#6a4ff0)':'background:var(--txt3)'};width:${pct}%"></div></div>`
       :t.status==='completed'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;background:var(--grn);width:100%"></div></div>`:'';
@@ -426,6 +428,7 @@ function renderExtractBanner(tasks){
       </div>
       ${bar}
       <div style="font-size:11px;color:var(--txt3);margin-top:2px">${infoLine}</div>
+      ${errLine}
     </div>`;
   }).join('');
 }

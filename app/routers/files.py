@@ -34,7 +34,15 @@ async def list_files(path: str = "", _=Depends(verify_key)):
     if not str(target.resolve()).startswith(str(DOWNLOAD_DIR.resolve())):
         raise HTTPException(403, "Access denied")
 
-    items = list_dir_items(target, DOWNLOAD_DIR)
+    # Get set of filenames actively being downloaded
+    downloading = set()
+    for d in downloads.values():
+        if d.get("status") in ("queued", "downloading"):
+            fn = d.get("filename", "")
+            if fn:
+                downloading.add(fn)
+
+    items = list_dir_items(target, DOWNLOAD_DIR, downloading)
     return {"items": items, "total": len(items), "current_path": path}
 
 

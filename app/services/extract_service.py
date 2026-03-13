@@ -229,11 +229,20 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
 
 async def _extract_rar(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
+        # Use stdbuf for line-buffered output (real-time progress)
         proc = await asyncio.create_subprocess_exec(
-            "unrar", "x", "-o+", "-y", str(fp), str(out_dir) + "/",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            "stdbuf", "-oL", "unrar", "x", "-o+", "-y", str(fp), str(out_dir) + "/",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _extract_procs[eid] = proc
+        stderr_lines = []
+
+        async def read_stderr():
+            async for line in proc.stderr:
+                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
+
+        stderr_task = asyncio.create_task(read_stderr())
+
         while True:
             line = await proc.stdout.readline()
             if not line:
@@ -257,6 +266,7 @@ async def _extract_rar(fp: Path, out_dir: Path, eid: str) -> bool:
                 proc.kill()
                 break
         await proc.wait()
+        await stderr_task
         _extract_procs.pop(eid, None)
 
         if extract_tasks.get(eid, {}).get("status") == "cancelled":
@@ -272,17 +282,78 @@ async def _extract_rar(fp: Path, out_dir: Path, eid: str) -> bool:
             })
             return True
         else:
-            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
+            # Extract actual error from stderr
+            err_msg = "Extraction failed"
+            for line in reversed(stderr_lines):
+                if line and not line.startswith("UNRAR") and not line.startswith("Extracting"):
+                    err_msg = line[:200]
+                    break
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
-        _extract_procs.pop(eid, None)
-        extract_tasks[eid].update({"status": "failed", "error": "unrar not found"})
-        return False
+        # stdbuf not available, try without it
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "unrar", "x", "-o+", "-y", str(fp), str(out_dir) + "/",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            _extract_procs[eid] = proc
+            stderr_data = []
+
+            async def read_err():
+                async for line in proc.stderr:
+                    stderr_data.append(line.decode("utf-8", errors="ignore").strip())
+
+            err_t = asyncio.create_task(read_err())
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                dec = line.decode("utf-8", errors="ignore").strip()
+                if dec:
+                    m = re.search(r'(\d+)%', dec)
+                    if m:
+                        pct = float(m.group(1))
+                        extract_tasks[eid]["percent"] = pct
+                        _calc_eta(extract_tasks[eid])
+                        eta = extract_tasks[eid].get("eta", "")
+                        spd = extract_tasks[eid].get("speed", "")
+                        parts_l = [f"{pct:.0f}%"]
+                        if spd: parts_l.append(spd)
+                        if eta: parts_l.append(f"ETA {eta}")
+                        extract_tasks[eid]["progress"] = " · ".join(parts_l)
+                if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                    proc.kill()
+                    break
+            await proc.wait()
+            await err_t
+            _extract_procs.pop(eid, None)
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                return False
+            if proc.returncode == 0:
+                elapsed = extract_tasks[eid].get("elapsed", "")
+                extract_tasks[eid].update({
+                    "status": "completed", "percent": 100,
+                    "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
+                    "speed": "", "eta": "",
+                    "completed_at": datetime.now().isoformat()
+                })
+                return True
+            else:
+                err_msg = "Extraction failed"
+                for line in reversed(stderr_data):
+                    if line: err_msg = line[:200]; break
+                extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
+                return False
+        except FileNotFoundError:
+            _extract_procs.pop(eid, None)
+            extract_tasks[eid].update({"status": "failed", "error": "unrar not found — install it on server"})
+            return False
 
 
 async def _extract_zip(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
-        # Count total files in archive for progress
+        # Count total files for progress
         total_files = 0
         try:
             lp = await asyncio.create_subprocess_exec(
@@ -301,10 +372,18 @@ async def _extract_zip(fp: Path, out_dir: Path, eid: str) -> bool:
 
         proc = await asyncio.create_subprocess_exec(
             "unzip", "-o", str(fp), "-d", str(out_dir),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _extract_procs[eid] = proc
         extracted = 0
+        stderr_lines = []
+
+        async def read_stderr():
+            async for line in proc.stderr:
+                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
+
+        stderr_task = asyncio.create_task(read_stderr())
+
         while True:
             line = await proc.stdout.readline()
             if not line:
@@ -330,6 +409,7 @@ async def _extract_zip(fp: Path, out_dir: Path, eid: str) -> bool:
                 proc.kill()
                 break
         await proc.wait()
+        await stderr_task
         _extract_procs.pop(eid, None)
 
         if extract_tasks.get(eid, {}).get("status") == "cancelled":
@@ -345,21 +425,32 @@ async def _extract_zip(fp: Path, out_dir: Path, eid: str) -> bool:
             })
             return True
         else:
-            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
+            err_msg = "Extraction failed"
+            for line in reversed(stderr_lines):
+                if line: err_msg = line[:200]; break
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
         _extract_procs.pop(eid, None)
-        extract_tasks[eid].update({"status": "failed", "error": "unzip not found"})
+        extract_tasks[eid].update({"status": "failed", "error": "unzip not found — install it on server"})
         return False
 
 
 async def _extract_7z(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "7z", "x", "-y", f"-o{out_dir}", str(fp),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            "stdbuf", "-oL", "7z", "x", "-y", f"-o{out_dir}", str(fp),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _extract_procs[eid] = proc
+        stderr_lines = []
+
+        async def read_stderr():
+            async for line in proc.stderr:
+                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
+
+        stderr_task = asyncio.create_task(read_stderr())
+
         while True:
             line = await proc.stdout.readline()
             if not line:
@@ -383,6 +474,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str) -> bool:
                 proc.kill()
                 break
         await proc.wait()
+        await stderr_task
         _extract_procs.pop(eid, None)
 
         if extract_tasks.get(eid, {}).get("status") == "cancelled":
@@ -398,12 +490,70 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str) -> bool:
             })
             return True
         else:
-            extract_tasks[eid].update({"status": "failed", "error": "Extraction failed", "speed": "", "eta": ""})
+            err_msg = "Extraction failed"
+            for line in reversed(stderr_lines):
+                if line: err_msg = line[:200]; break
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
             return False
     except FileNotFoundError:
-        _extract_procs.pop(eid, None)
-        extract_tasks[eid].update({"status": "failed", "error": "7z not found"})
-        return False
+        # stdbuf not available, try without it
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "7z", "x", "-y", f"-o{out_dir}", str(fp),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            _extract_procs[eid] = proc
+            stderr_data = []
+
+            async def read_err():
+                async for line in proc.stderr:
+                    stderr_data.append(line.decode("utf-8", errors="ignore").strip())
+
+            err_t = asyncio.create_task(read_err())
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                dec = line.decode("utf-8", errors="ignore").strip()
+                if dec:
+                    m = re.search(r'(\d+)%', dec)
+                    if m:
+                        pct = float(m.group(1))
+                        extract_tasks[eid]["percent"] = pct
+                        _calc_eta(extract_tasks[eid])
+                        eta = extract_tasks[eid].get("eta", "")
+                        spd = extract_tasks[eid].get("speed", "")
+                        parts_l = [f"{pct:.0f}%"]
+                        if spd: parts_l.append(spd)
+                        if eta: parts_l.append(f"ETA {eta}")
+                        extract_tasks[eid]["progress"] = " · ".join(parts_l)
+                if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                    proc.kill()
+                    break
+            await proc.wait()
+            await err_t
+            _extract_procs.pop(eid, None)
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                return False
+            if proc.returncode == 0:
+                elapsed = extract_tasks[eid].get("elapsed", "")
+                extract_tasks[eid].update({
+                    "status": "completed", "percent": 100,
+                    "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
+                    "speed": "", "eta": "",
+                    "completed_at": datetime.now().isoformat()
+                })
+                return True
+            else:
+                err_msg = "Extraction failed"
+                for line in reversed(stderr_data):
+                    if line: err_msg = line[:200]; break
+                extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
+                return False
+        except FileNotFoundError:
+            _extract_procs.pop(eid, None)
+            extract_tasks[eid].update({"status": "failed", "error": "7z not found — install p7zip-full on server"})
+            return False
 
 
 async def _extract_tar(fp: Path, out_dir: Path, eid: str) -> bool:

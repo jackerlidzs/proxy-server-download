@@ -306,13 +306,20 @@ async def restore_version(rel_path: str, version: int) -> bool:
     return True
 
 
-def list_dir_items(target: Path, base: Path) -> list:
-    """List directory contents with metadata."""
+def list_dir_items(target: Path, base: Path, downloading: set = None) -> list:
+    """List directory contents with metadata. Filters out active downloads and .aria2 files."""
     items = []
+    downloading = downloading or set()
     for f in sorted(target.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
         if f.name.startswith("."):
             continue
         if f.name in SYSTEM_DIRS:
+            continue
+        # Hide .aria2 control files
+        if f.name.endswith(".aria2"):
+            continue
+        # Hide files that are actively downloading
+        if f.is_file() and f.name in downloading:
             continue
 
         stat = f.stat()
