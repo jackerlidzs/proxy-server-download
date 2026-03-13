@@ -10,14 +10,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from auth import verify_key, hash_password, verify_password
 from models import ShareLinkRequest
-from config import DOWNLOAD_DIR, SERVER_URL
+from config import DOWNLOAD_DIR
 from database import get_db
 
 router = APIRouter(tags=["share"])
 
 
 @router.post("/api/share")
-async def create_share(req: ShareLinkRequest, user=Depends(verify_key)):
+async def create_share(req: ShareLinkRequest, request: Request, user=Depends(verify_key)):
     """Create a public share link for a file."""
     fp = DOWNLOAD_DIR / req.filepath
     if not fp.exists():
@@ -37,7 +37,8 @@ async def create_share(req: ShareLinkRequest, user=Depends(verify_key)):
     """, (token, req.filepath, user["username"], expires, pw_hash, req.max_downloads or 0))
     await db.commit()
 
-    url = f"{SERVER_URL}/s/{token}"
+    base = str(request.base_url).rstrip("/")
+    url = f"{base}/s/{token}"
     return {
         "token": token, "url": url, "filepath": req.filepath,
         "expires_at": expires,
@@ -47,17 +48,18 @@ async def create_share(req: ShareLinkRequest, user=Depends(verify_key)):
 
 
 @router.get("/api/shares")
-async def list_shares(_=Depends(verify_key)):
+async def list_shares(request: Request, _=Depends(verify_key)):
     db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT * FROM share_links ORDER BY created_at DESC"
     )
+    base = str(request.base_url).rstrip("/")
     items = []
     for r in rows:
         items.append({
             "id": r["id"], "token": r["token"],
             "file_path": r["file_path"],
-            "url": f"{SERVER_URL}/s/{r['token']}",
+            "url": f"{base}/s/{r['token']}",
             "created_by": r["created_by"],
             "created_at": r["created_at"],
             "expires_at": r["expires_at"],

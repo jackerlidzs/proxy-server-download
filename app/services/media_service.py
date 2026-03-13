@@ -16,8 +16,8 @@ _active_transcodes: dict = {}
 
 # HLS profiles optimized for 2-core Xeon (software encoding only)
 HLS_PROFILES = [
-    {"name": "480p", "height": 480, "bitrate": "1500k", "audio_br": "128k"},
-    {"name": "720p", "height": 720, "bitrate": "3000k", "audio_br": "192k"},
+    {"name": "480p", "height": 480, "bitrate": "1200k", "audio_br": "96k"},
+    {"name": "720p", "height": 720, "bitrate": "2500k", "audio_br": "128k"},
 ]
 
 
@@ -302,15 +302,17 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list, vid_h
                 }
 
                 cmd = [
-                    "ffmpeg", "-y", "-i", str(filepath),
+                    "ffmpeg", "-y",
+                    "-threads", "2",
+                    "-i", str(filepath),
                     "-map", "0:v:0", "-map", "0:a:0?",
                     "-c:v", "libx264",
-                    "-preset", "fast",
+                    "-preset", "superfast",
                     "-tune", "film",
                     "-vf", f"scale=-2:{profile['height']}",
                     "-b:v", profile["bitrate"],
                     "-maxrate", profile["bitrate"],
-                    "-bufsize", f"{int(profile['bitrate'].replace('k',''))*2}k",
+                    "-bufsize", f"{int(profile['bitrate'].replace('k',''))}k",
                     "-c:a", "aac", "-b:a", profile["audio_br"],
                     "-ac", "2",
                     "-f", "hls",
