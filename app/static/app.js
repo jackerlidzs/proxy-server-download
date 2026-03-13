@@ -266,21 +266,12 @@ function renderFM(){
     }).join('')+'</div>';
   }else{
     const sa=k=>fmSort===k?(fmSortDir>0?'▲':'▼'):'';
-    el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div onclick="fmSetSort('name')" style="cursor:pointer">Name <span class="sort-arrow">${sa('name')}</span></div><div onclick="fmSetSort('size')" style="cursor:pointer">Size <span class="sort-arrow">${sa('size')}</span></div><div onclick="fmSetSort('type')" style="cursor:pointer">Type <span class="sort-arrow">${sa('type')}</span></div><div></div></div>`+items.map(f=>{
+    el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div onclick="fmSetSort('name')" style="cursor:pointer">Name <span class="sort-arrow">${sa('name')}</span></div><div onclick="fmSetSort('size')" style="cursor:pointer">Size <span class="sort-arrow">${sa('size')}</span></div><div onclick="fmSetSort('type')" style="cursor:pointer">Type <span class="sort-arrow">${sa('type')}</span></div></div>`+items.map(f=>{
       const ic=icons[f.type]||'📄';
       const ext=(f.ext||'').toLowerCase();
       const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
         (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:''
-      let btns='';
-      if(f.type!=='folder'){
-        btns+=`<button class="cp" onclick="event.stopPropagation();openPreview('${esc(f.path)}')" title="Preview">👁</button>`;
-        btns+=`<button class="cp" onclick="event.stopPropagation();showRename('${esc(f.path)}','${esc(f.name)}')" title="Rename">✏️</button>`;
-        btns+=`<button class="cp" onclick="event.stopPropagation();copyFile('${esc(f.path)}')" title="Copy">📋</button>`;
-        if(f.type==='archive')btns+=`<button class="cp" onclick="event.stopPropagation();extractF('${esc(f.path)}')" title="Extract" style="color:var(--orn)">📦</button>`;
-        btns+=`<button class="cp" onclick="event.stopPropagation();shareFile('${esc(f.path)}')" title="Share" style="color:#a78bfa">🔗</button>`;
-        btns+=`<button class="cp" onclick="event.stopPropagation();delF('${esc(f.path)}')" style="color:var(--red)" title="Delete">🗑</button>`;
-      }
-      return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div><div>${btns}</div></div>`;
+      return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div></div>`;
     }).join('')+'</div>';
   }
 }
@@ -686,22 +677,27 @@ function dlgResolve(v){
 
 // === Context Menu ===
 const ARCHIVE_EXTS=['.rar','.zip','.7z','.tar','.gz','.tgz','.tar.gz','.bz2'];
+const CODE_EXTS=['.html','.css','.js','.jsx','.ts','.tsx','.php','.py','.sh','.bash','.bat','.ps1','.c','.cpp','.h','.java','.go','.rs','.rb','.sql','.json','.xml','.yaml','.yml','.md','.txt','.log','.ini','.cfg','.conf','.env','.toml','.csv','.nfo','.srt','.vtt'];
 function isArchiveFile(path){
   const n=path.toLowerCase();
-  // Check .partN.rar pattern
   if(/\.part\d+\.rar$/i.test(n))return true;
   return ARCHIVE_EXTS.some(e=>n.endsWith(e));
+}
+function isCodeFile(path){
+  const n=path.toLowerCase();
+  return CODE_EXTS.some(e=>n.endsWith(e));
 }
 function fmCtx(ev,path){
   ev.preventDefault();ev.stopPropagation();
   ctxTarget=path;
   const m=document.getElementById('ctxMenu');
-  // Show/hide extract option based on file type
   const extItem=document.getElementById('ctxExtract');
+  const editItem=document.getElementById('ctxEdit');
   if(extItem)extItem.style.display=isArchiveFile(path)?'block':'none';
+  if(editItem)editItem.style.display=isCodeFile(path)?'block':'none';
   m.style.display='block';
-  m.style.left=Math.min(ev.clientX,window.innerWidth-180)+'px';
-  m.style.top=Math.min(ev.clientY,window.innerHeight-220)+'px';
+  m.style.left=Math.min(ev.clientX,window.innerWidth-200)+'px';
+  m.style.top=Math.min(ev.clientY,window.innerHeight-280)+'px';
 }
 document.addEventListener('click',()=>{document.getElementById('ctxMenu').style.display='none'});
 function ctxAction(act){
@@ -710,6 +706,7 @@ function ctxAction(act){
   const f=fmAllItems.find(i=>i.path===ctxTarget);
   switch(act){
     case 'open':if(f&&f.type==='folder')fmGo(f.path);else openPreview(ctxTarget);break;
+    case 'edit':openPreview(ctxTarget);break;
     case 'copy':copyFile(ctxTarget);break;
     case 'rename':if(f)showRename(ctxTarget,f.name);break;
     case 'share':shareFile(ctxTarget);break;
@@ -784,3 +781,62 @@ async function savePreview(){
     toast('Saved! (version backed up)','ok');previewDirty=false;
   }catch(e){toast(e.message,'err')}
 }
+
+// === Drag Select (Rubber Band) ===
+(function(){
+  let dragging=false,startX=0,startY=0,box=null;
+  const fmBody=()=>document.getElementById('fmContent');
+  function createBox(){
+    box=document.createElement('div');
+    box.id='dragSelectBox';
+    box.style.cssText='position:fixed;border:2px solid var(--pri);background:rgba(99,102,241,0.12);border-radius:3px;pointer-events:none;z-index:999;display:none';
+    document.body.appendChild(box);
+  }
+  document.addEventListener('mousedown',e=>{
+    const body=fmBody();if(!body||!body.contains(e.target))return;
+    // Don't start drag on buttons, inputs, context menu, modals
+    if(e.target.closest('button,input,textarea,select,.ctx-menu,.modal-bg,.btn-s,.btn-d,.cp'))return;
+    if(e.button!==0)return;
+    dragging=false;startX=e.clientX;startY=e.clientY;
+    if(!box)createBox();
+    function onMove(ev){
+      const dx=ev.clientX-startX,dy=ev.clientY-startY;
+      if(!dragging&&(Math.abs(dx)>5||Math.abs(dy)>5)){
+        dragging=true;box.style.display='block';
+        // Clear previous selection
+        fmSelected.clear();
+        document.querySelectorAll('.fm-item.selected,.fm-row.selected').forEach(el=>el.classList.remove('selected'));
+      }
+      if(!dragging)return;
+      const x=Math.min(startX,ev.clientX),y=Math.min(startY,ev.clientY);
+      const w=Math.abs(dx),h=Math.abs(dy);
+      box.style.left=x+'px';box.style.top=y+'px';
+      box.style.width=w+'px';box.style.height=h+'px';
+      // Check intersections
+      const rect={left:x,top:y,right:x+w,bottom:y+h};
+      fmSelected.clear();
+      document.querySelectorAll('.fm-item,.fm-row:not(.fm-row-h)').forEach(el=>{
+        const p=el.dataset.path;if(!p)return;
+        const r=el.getBoundingClientRect();
+        const hit=!(r.right<rect.left||r.left>rect.right||r.bottom<rect.top||r.top>rect.bottom);
+        if(hit){fmSelected.add(p);el.classList.add('selected')}
+        else{el.classList.remove('selected')}
+      });
+      // Update bulk bar
+      const cnt=fmSelected.size;const show=cnt>0;
+      document.getElementById('fmBulkDel').style.display=show?'inline-flex':'none';
+      document.getElementById('fmBulkCompress').style.display=show?'inline-flex':'none';
+      document.getElementById('fmSelInfo').style.display=show?'inline-flex':'none';
+      document.getElementById('fmBulkDiv').style.display=show?'block':'none';
+      document.getElementById('fmSelCount').textContent=cnt;
+    }
+    function onUp(){
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+      if(box)box.style.display='none';
+      dragging=false;
+    }
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+  });
+})();

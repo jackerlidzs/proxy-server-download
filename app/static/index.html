@@ -52,12 +52,15 @@
 
 <!-- Context Menu -->
 <div id="ctxMenu" class="ctx-menu" style="display:none">
-<div class="ctx-item" onclick="ctxAction('open')">👁 Open/Preview</div>
+<div class="ctx-item" onclick="ctxAction('open')">👁 Open / Preview</div>
+<div class="ctx-item" id="ctxEdit" onclick="ctxAction('edit')" style="display:none">✏️ Edit Code</div>
 <div class="ctx-item" id="ctxExtract" onclick="ctxAction('extract')" style="display:none">📦 Extract</div>
+<div class="ctx-sep"></div>
+<div class="ctx-item" onclick="ctxAction('rename')">✏ Rename</div>
 <div class="ctx-item" onclick="ctxAction('copy')">📋 Copy</div>
-<div class="ctx-item" onclick="ctxAction('rename')">✏️ Rename</div>
 <div class="ctx-item" onclick="ctxAction('share')">🔗 Share</div>
 <div class="ctx-item" onclick="ctxAction('download')">⬇️ Download</div>
+
 <div class="ctx-item" onclick="ctxAction('info')">ℹ️ Info</div>
 <div class="ctx-sep"></div>
 <div class="ctx-item ctx-danger" onclick="ctxAction('delete')">🗑 Delete</div>
