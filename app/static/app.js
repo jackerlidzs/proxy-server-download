@@ -784,7 +784,7 @@ function ctxAction(act){
     case 'download':if(f&&f.download_url)window.open(f.download_url);break;
     case 'extract':extractF(ctxTarget);break;
     case 'info':showDetail(ctxTarget);break;
-    case 'delete':delF(ctxTarget);break;
+    case 'delete':if(fmSelected.size>1){fmBulkDel()}else{delF(ctxTarget)}break;
   }
 }
 
