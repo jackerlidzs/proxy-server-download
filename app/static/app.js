@@ -200,6 +200,16 @@ async function resumeDl(tid){
 async function clearDone(){
   try{const r=await api('DELETE','/api/downloads');rAll()}catch(e){toast(e.message,'err')}
 }
+async function delDownloadFile(tid,filename){
+  if(!await dlgConfirm('🗑 Permanently Delete','Delete "'+filename.split('/').pop()+'" forever? This cannot be undone.'))return;
+  try{
+    // Delete the actual file
+    await api('DELETE','/api/files/'+encodeURIComponent(filename)+'?permanent=true');
+    // Remove download entry
+    try{await api('DELETE','/api/downloads/'+tid)}catch(e){}
+    toast('Deleted permanently','ok');rAll();rFiles();health();
+  }catch(e){toast(e.message,'err')}
+}
 
 async function rAll(){
   try{const d=await api('GET','/api/downloads');renderDL(d.downloads||[])}catch{}
@@ -224,14 +234,37 @@ function renderDL(items){
     let aH='';
     if(d.status==='downloading'||d.status==='queued')aH=`<button class="btn-d" onclick="cancelDl('${d.task_id}')" title="Cancel" style="font-size:10px;padding:2px 6px">✕</button>`;
     if(d.status==='cancelled'||d.status==='failed')aH=`<button class="btn-g" onclick="resumeDl('${d.task_id}')" title="Resume" style="font-size:10px;padding:2px 6px">▶</button>`;
-    if(d.status==='completed'&&d.download_url)aH=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpL('${d.download_url}')">📋</button>`;
+    const fnExt=d.filename?'.'+d.filename.split('.').pop().toLowerCase():'';
+    const isVid=VID_EXTS.includes(fnExt);
+    if(d.status==='completed'&&d.download_url){
+      aH='';
+      if(isVid)aH+=`<button class="btn-g" onclick="event.stopPropagation();navigateToFile('${d.filename.replace(/'/g,"\\'")}'+'')" title="Play" style="font-size:10px;padding:2px 6px">▶️</button>`;
+      aH+=`<a href="${d.download_url}" class="btn-s" target="_blank" style="font-size:10px">↓</a><button class="cp" onclick="cpL('${d.download_url}')">📋</button>`;
+    }
+    // Delete button for non-active downloads (permanent delete file)
+    if(!['downloading','queued','extracting','compressing'].includes(d.status)&&d.filename){
+      aH+=`<button class="btn-d" onclick="event.stopPropagation();delDownloadFile('${d.task_id}','${d.filename.replace(/'/g,"\\\'")}')" title="Delete file" style="font-size:10px;padding:2px 6px">🗑</button>`;
+    }
     let eR='';if(d.status==='failed'&&d.error)eR=`<div style="font-size:10px;color:var(--red);margin-top:4px;word-break:break-all">❌ ${esc(d.error.substring(0,150))}</div>`;
     if(d.status==='cancelled')eR=`<div style="font-size:10px;color:var(--txt3);margin-top:4px">Cancelled — click ▶ to resume</div>`;
     const sz=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
     const t=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
     const ic={extracting:'📦',compressing:'🗜️',cancelled:'⏸'}[d.status]||'📄';
-    return`<div class="dl-i"><div class="dl-top"><div class="dl-name">${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
+    const nameClick=d.status==='completed'&&d.filename?` onclick="navigateToFile('${d.filename.replace(/'/g,"\\'")}')"; style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px"`:'';
+    return`<div class="dl-i"><div class="dl-top"><div class="dl-name"${nameClick}>${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
   }).join('');
+}
+// Navigate from download list to file in File Manager
+function navigateToFile(filename){
+  // Extract directory from filename (e.g., 'sub/file.txt' → 'sub')
+  const parts=filename.split('/');
+  const dir=parts.length>1?parts.slice(0,-1).join('/'):''; 
+  fmCurPath=dir;
+  // Switch to File Manager tab
+  const fmTab=document.querySelector('.sb-item[onclick*="fm"]');
+  if(fmTab)go('fm',fmTab);
+  // After files load, open preview
+  setTimeout(()=>openPreview(filename),500);
 }
 
 // File Manager
@@ -286,7 +319,9 @@ function renderFM(){
       const ic=icons[f.type]||'📄';
       const ext=(f.ext||'').toLowerCase();
       const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
-        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:''
+        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:
+        f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`
+        :f.download_url?`ondblclick="window.open('${f.download_url}')"`:''
       return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div></div>`;
     }).join('')+'</div>';
   }
