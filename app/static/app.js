@@ -774,6 +774,7 @@ const VP={
     this.v.querySelectorAll('track').forEach(t=>t.remove());
 
     // Show video, hide placeholder
+    document.getElementById('playerW').style.display='block';
     this.playerE.style.display='none';
     this.v.style.display='block';
     this.bigPlay.classList.add('show');
