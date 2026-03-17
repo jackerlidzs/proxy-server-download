@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import DOWNLOAD_DIR, TRASH_DIR, VERSIONS_DIR, HLS_DIR, CLEANUP_HOURS
+from config import DOWNLOAD_DIR, TRASH_DIR, VERSIONS_DIR, HLS_DIR, CLEANUP_HOURS, TEMP_DIR
 from database import get_db, close_db
 from services.download_service import init_semaphore
 from services.extract_service import init_extract_semaphore
@@ -76,6 +76,7 @@ async def lifespan(app):
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     HLS_DIR.mkdir(parents=True, exist_ok=True)
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Initialize database
     await get_db()

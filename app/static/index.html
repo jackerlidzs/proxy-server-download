@@ -339,6 +339,21 @@ curl 'https://example.com/file2.rar' \
 
 </div></div>
 
+<!-- Upload Progress Panel (floating) -->
+<div id="uploadPanel" class="upl-panel" style="display:none">
+  <div class="upl-header">
+    <span class="upl-title">📤 Upload <span id="uplCount"></span></span>
+    <div class="upl-hdr-acts">
+      <button class="upl-hdr-btn" id="uplMinBtn" onclick="UPM.toggleMin()">▼</button>
+      <button class="upl-hdr-btn" onclick="UPM.close()">✕</button>
+    </div>
+  </div>
+  <div class="upl-body" id="uplBody">
+    <div class="upl-overall" id="uplOverall"></div>
+    <div class="upl-list" id="uplList"></div>
+  </div>
+</div>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

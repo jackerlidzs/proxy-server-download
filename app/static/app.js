@@ -395,14 +395,9 @@ async function fmBulkCompress(){
   try{await api('POST','/api/compress',{filenames:[...fmSelected],archive_name:name,format:fmt});toast('Compression started','ok');rAll()}
   catch(e){toast(e.message,'err')}
 }
-async function fmUpload(files){
+function fmUpload(files){
   if(!files||!files.length)return;
-  for(const f of files){
-    const fd=new FormData();fd.append('file',f);fd.append('path',fmCurPath);
-    try{await api('POST','/api/upload',fd);toast('Uploaded '+f.name,'ok')}
-    catch(e){toast('Upload failed: '+e.message,'err')}
-  }
-  rFiles();
+  UPM.start(files,fmCurPath);
 }
 function showRename(path,name){
   renameTarget=path;
@@ -1711,3 +1706,255 @@ document.addEventListener('keydown', e => {
     ctxAction('rename');
   }
 });
+
+// ===== Upload Manager (UPM) — Chunked Upload with Progress =====
+const UPM={
+  files:[],
+  CHUNK:5*1024*1024,
+  MAX_RETRY:3,
+  _min:false,
+
+  start(fileList,path){
+    for(const f of fileList){
+      const tc=Math.ceil(f.size/this.CHUNK)||1;
+      this.files.push({
+        id:crypto.randomUUID(),file:f,name:f.name,size:f.size,
+        path:path||'',status:'pending',chunkSize:this.CHUNK,
+        totalChunks:tc,chunkIndex:0,loaded:0,percent:0,
+        speed:0,eta:0,retries:0,xhr:null,error:'',
+        startTime:0,_samples:[],_paused:false
+      });
+    }
+    document.getElementById('uploadPanel').style.display='flex';
+    this._min=false;
+    document.getElementById('uplBody').style.display='';
+    document.getElementById('uplMinBtn').textContent='\u25bc';
+    this.render();
+    this.uploadNext();
+  },
+
+  uploadNext(){
+    if(this.files.some(f=>f.status==='uploading'))return;
+    const next=this.files.find(f=>f.status==='pending');
+    if(!next){
+      if(this.files.every(f=>f.status==='done'||f.status==='error')){
+        rFiles();health();
+      }
+      this.render();
+      return;
+    }
+    next.status='uploading';
+    next.startTime=Date.now();
+    next._samples=[];
+    this.render();
+    this.sendChunk(next.id,0);
+  },
+
+  sendChunk(id,index){
+    const e=this.files.find(f=>f.id===id);
+    if(!e||e.status!=='uploading')return;
+    if(e._paused){e.status='paused';this.render();return;}
+    if(index>=e.totalChunks){
+      e.status='done';e.percent=100;e.speed=0;e.eta=0;
+      toast('Uploaded '+e.name,'ok');
+      this.render();
+      this.uploadNext();
+      return;
+    }
+    e.chunkIndex=index;
+    const start=index*this.CHUNK;
+    const end=Math.min(start+this.CHUNK,e.size);
+    const blob=e.file.slice(start,end);
+    const fd=new FormData();
+    fd.append('chunk',blob,e.name);
+
+    const xhr=new XMLHttpRequest();
+    e.xhr=xhr;
+    xhr.open('POST',base()+'/api/upload/chunk');
+    xhr.setRequestHeader('Authorization','Bearer '+K);
+    xhr.setRequestHeader('X-File-Id',e.id);
+    xhr.setRequestHeader('X-Chunk-Index',String(index));
+    xhr.setRequestHeader('X-Total-Chunks',String(e.totalChunks));
+    xhr.setRequestHeader('X-Filename',e.name);
+    xhr.setRequestHeader('X-Upload-Path',e.path);
+    xhr.timeout=60000;
+
+    const self=this;
+    xhr.upload.onprogress=function(ev){
+      if(!ev.lengthComputable)return;
+      e.loaded=start+ev.loaded;
+      e.percent=Math.min((e.loaded/e.size)*100,99.9);
+      const now=Date.now();
+      e._samples.push({time:now,loaded:e.loaded});
+      const cutoff=now-5000;
+      e._samples=e._samples.filter(s=>s.time>=cutoff);
+      if(e._samples.length>=2){
+        const first=e._samples[0],last=e._samples[e._samples.length-1];
+        const dt=(last.time-first.time)/1000;
+        if(dt>0){
+          e.speed=(last.loaded-first.loaded)/dt;
+          e.eta=e.speed>0?(e.size-e.loaded)/e.speed:0;
+        }
+      }
+      self.render();
+    };
+
+    xhr.onload=function(){
+      if(xhr.status>=200&&xhr.status<300){
+        e.retries=0;
+        try{
+          const res=JSON.parse(xhr.responseText);
+          if(res.status==='ok'){
+            e.status='done';e.percent=100;e.speed=0;e.eta=0;
+            toast('Uploaded '+e.name,'ok');
+            self.render();
+            self.uploadNext();
+          }else{
+            self.sendChunk(id,index+1);
+          }
+        }catch(err){
+          self.sendChunk(id,index+1);
+        }
+      }else{
+        self._handleError(e,index);
+      }
+    };
+    xhr.onerror=function(){self._handleError(e,index);};
+    xhr.ontimeout=function(){self._handleError(e,index);};
+    xhr.send(fd);
+  },
+
+  _handleError(entry,index){
+    if(entry.retries<this.MAX_RETRY){
+      entry.retries++;
+      const self=this;
+      setTimeout(function(){self.sendChunk(entry.id,index);},2000);
+    }else{
+      entry.status='error';
+      entry.error='Upload failed after '+this.MAX_RETRY+' retries';
+      entry.xhr=null;
+      this.render();
+      this.uploadNext();
+    }
+  },
+
+  pause(id){
+    const f=this.files.find(e=>e.id===id);
+    if(f&&f.status==='uploading'){f._paused=true;}
+  },
+  resume(id){
+    const f=this.files.find(e=>e.id===id);
+    if(f&&f.status==='paused'){
+      f._paused=false;f.status='uploading';
+      f._samples=[];f.startTime=Date.now();
+      this.sendChunk(f.id,f.chunkIndex);
+    }
+  },
+  cancel(id){
+    const f=this.files.find(e=>e.id===id);
+    if(!f)return;
+    if(f.xhr)f.xhr.abort();
+    f.status='error';f.error='Cancelled';f.xhr=null;
+    fetch(base()+'/api/upload/chunk/'+id,{
+      method:'DELETE',headers:{'Authorization':'Bearer '+K}
+    }).catch(function(){});
+    this.render();
+    this.uploadNext();
+  },
+  retry(id){
+    const f=this.files.find(e=>e.id===id);
+    if(!f)return;
+    f.chunkIndex=0;f.retries=0;f.loaded=0;
+    f.percent=0;f.speed=0;f.eta=0;
+    f.error='';f._samples=[];f.status='pending';f.xhr=null;
+    this.render();
+    this.uploadNext();
+  },
+  remove(id){
+    this.files=this.files.filter(f=>f.id!==id);
+    if(!this.files.length)document.getElementById('uploadPanel').style.display='none';
+    this.render();
+  },
+  toggleMin(){
+    this._min=!this._min;
+    document.getElementById('uplBody').style.display=this._min?'none':'';
+    document.getElementById('uplMinBtn').textContent=this._min?'\u25b2':'\u25bc';
+  },
+  close(){
+    document.getElementById('uploadPanel').style.display='none';
+  },
+
+  render(){
+    const panel=document.getElementById('uploadPanel');
+    if(!panel||panel.style.display==='none')return;
+    const total=this.files.length;
+    const done=this.files.filter(f=>f.status==='done').length;
+    const uploading=this.files.find(f=>f.status==='uploading');
+
+    document.getElementById('uplCount').textContent=total?'\u00b7 '+done+'/'+total:'';
+
+    const oEl=document.getElementById('uplOverall');
+    if(total){
+      let totalBytes=0,loadedBytes=0;
+      this.files.forEach(f=>{totalBytes+=f.size;loadedBytes+=(f.status==='done'?f.size:f.loaded);});
+      const oPct=totalBytes>0?(loadedBytes/totalBytes*100):0;
+      const allDone=done===total;
+      const speedTxt=uploading&&uploading.speed>0?formatBytes(uploading.speed)+'/s':'';
+      oEl.innerHTML='<div class="upl-ov-info"><span class="upl-ov-l">'+(allDone?'\u2705 All done':done+'/'+total+' \u00b7 '+oPct.toFixed(0)+'%')+'</span>'+(speedTxt?'<span class="upl-ov-r">'+speedTxt+'</span>':'')+'</div><div class="upl-ov-bar"><div class="upl-ov-fill" style="width:'+oPct+'%"></div></div>';
+    }else{oEl.innerHTML='';}
+
+    const lEl=document.getElementById('uplList');
+    if(!lEl)return;
+    lEl.innerHTML=this.files.map(f=>{
+      const ext=f.name.includes('.')?f.name.split('.').pop().toLowerCase():'';
+      const extCls={'pdf':'upl-x-pdf','png':'upl-x-img','jpg':'upl-x-img','jpeg':'upl-x-img','gif':'upl-x-img','webp':'upl-x-img','xls':'upl-x-xls','xlsx':'upl-x-xls','csv':'upl-x-xls','zip':'upl-x-zip','rar':'upl-x-zip','7z':'upl-x-zip','mp4':'upl-x-vid','mkv':'upl-x-vid','avi':'upl-x-vid','mov':'upl-x-vid','mp3':'upl-x-aud','flac':'upl-x-aud','doc':'upl-x-doc','docx':'upl-x-doc'}[ext]||'upl-x-def';
+
+      let acts='';
+      if(f.status==='uploading')acts='<button class="upl-ab upl-ab-p" onclick="UPM.pause(\''+f.id+'\')" title="Pause">\u23f8</button><button class="upl-ab upl-ab-c" onclick="UPM.cancel(\''+f.id+'\')" title="Cancel">\u2715</button>';
+      else if(f.status==='paused')acts='<button class="upl-ab upl-ab-r" onclick="UPM.resume(\''+f.id+'\')" title="Resume">\u25b6</button><button class="upl-ab upl-ab-c" onclick="UPM.cancel(\''+f.id+'\')" title="Cancel">\u2715</button>';
+      else if(f.status==='error')acts='<button class="upl-ab upl-ab-rt" onclick="UPM.retry(\''+f.id+'\')" title="Retry">\u21bb</button><button class="upl-ab upl-ab-rm" onclick="UPM.remove(\''+f.id+'\')" title="Remove">\u2715</button>';
+      else if(f.status==='done')acts='<span class="upl-ab upl-ab-ok">\u2713</span><button class="upl-ab upl-ab-rm" onclick="UPM.remove(\''+f.id+'\')" title="Remove">\u2715</button>';
+
+      const barCls=f.status==='done'?'upl-bf-done':f.status==='error'?'upl-bf-err':f.status==='uploading'?'upl-bf-up':f.status==='paused'?'upl-bf-pause':'upl-bf-pend';
+
+      let meta='';
+      if(f.status==='uploading'){
+        meta='<span class="upl-spd">'+formatBytes(f.speed)+'/s</span>';
+        meta+='<span class="upl-eta">ETA '+formatETA(f.eta)+'</span>';
+        meta+='<span class="upl-byt">'+formatBytes(f.loaded)+' / '+formatBytes(f.size)+'</span>';
+      }else if(f.status==='done'){
+        meta='<span style="color:var(--grn)">Done \u00b7 '+formatBytes(f.size)+'</span>';
+      }else if(f.status==='pending'){
+        meta='<span class="upl-st-pend">Pending</span><span>'+formatBytes(f.size)+'</span>';
+      }else if(f.status==='paused'){
+        meta='<span class="upl-st-pause">Paused</span><span>'+formatBytes(f.loaded)+' / '+formatBytes(f.size)+'</span>';
+      }else if(f.status==='error'){
+        meta='<span class="upl-st-err">'+esc(f.error)+'</span>';
+      }
+
+      return '<div class="upl-item">'+
+        '<div class="upl-item-top">'+
+          '<div class="upl-item-info"><span class="upl-ext '+extCls+'">'+esc(ext.toUpperCase()||'FILE')+'</span><span class="upl-item-name" title="'+esc(f.name)+'">'+esc(f.name)+'</span></div>'+
+          '<div class="upl-item-acts">'+acts+'</div>'+
+        '</div>'+
+        '<div class="upl-prog"><div class="upl-bf '+barCls+'" style="width:'+f.percent+'%"></div></div>'+
+        '<div class="upl-meta">'+meta+'</div>'+
+      '</div>';
+    }).join('');
+  }
+};
+
+// Upload helpers
+function formatBytes(b){
+  if(!b||b<=0)return '0 B';
+  if(b<1024)return b+' B';
+  if(b<1048576)return(b/1024).toFixed(1)+' KB';
+  if(b<1073741824)return(b/1048576).toFixed(1)+' MB';
+  return(b/1073741824).toFixed(2)+' GB';
+}
+function formatETA(s){
+  if(!s||s<=0)return '0s';
+  if(s<60)return Math.ceil(s)+'s';
+  if(s<3600)return Math.floor(s/60)+'m '+Math.ceil(s%60)+'s';
+  return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';
+}

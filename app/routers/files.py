@@ -176,6 +176,83 @@ async def upload_file(file: UploadFile = File(...), path: str = Form(""), _=Depe
     }
 
 
+# --- Chunked Upload ---
+@router.post("/upload/chunk")
+async def upload_chunk(
+    chunk: UploadFile = File(...),
+    request: Request = None,
+    _=Depends(verify_key)
+):
+    """Receive a single chunk. Auto-merge when all chunks received."""
+    from config import TEMP_DIR
+
+    file_id = request.headers.get("X-File-Id", "")
+    index = int(request.headers.get("X-Chunk-Index", "0"))
+    total = int(request.headers.get("X-Total-Chunks", "1"))
+    filename = request.headers.get("X-Filename", "uploaded_file")
+    upload_path = request.headers.get("X-Upload-Path", "")
+
+    if not file_id:
+        raise HTTPException(400, "Missing X-File-Id header")
+    if total < 1:
+        raise HTTPException(400, "Invalid X-Total-Chunks")
+
+    # Save chunk to temp/{file_id}/chunk_{index}
+    chunk_dir = TEMP_DIR / file_id
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    chunk_path = chunk_dir / f"chunk_{index}"
+
+    with open(chunk_path, "wb") as f:
+        while data := await chunk.read(1024 * 1024):
+            f.write(data)
+
+    # Check if all chunks received
+    received = len(list(chunk_dir.glob("chunk_*")))
+    if received >= total:
+        # Merge all chunks into final file
+        target_dir = DOWNLOAD_DIR / upload_path if upload_path else DOWNLOAD_DIR
+        target_dir.mkdir(parents=True, exist_ok=True)
+        fp = target_dir / sanitize(filename)
+
+        # Version existing file before overwrite
+        if fp.exists():
+            rel = str(fp.relative_to(DOWNLOAD_DIR))
+            await create_version(rel)
+
+        with open(fp, "wb") as out:
+            for i in range(total):
+                cp = chunk_dir / f"chunk_{i}"
+                if not cp.exists():
+                    raise HTTPException(400, f"Missing chunk {i}")
+                with open(cp, "rb") as inp:
+                    while block := inp.read(1024 * 1024):
+                        out.write(block)
+
+        # Cleanup temp chunks
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+
+        await index_file(fp)
+        return {
+            "status": "ok",
+            "filename": fp.name,
+            "size": fp.stat().st_size,
+            "size_human": human_size(fp.stat().st_size)
+        }
+
+    return {"status": "received", "chunk": index}
+
+
+@router.delete("/upload/chunk/{file_id}")
+async def cancel_chunk_upload(file_id: str, _=Depends(verify_key)):
+    """Cancel chunked upload — cleanup temp chunks."""
+    from config import TEMP_DIR
+
+    chunk_dir = TEMP_DIR / file_id
+    if chunk_dir.exists():
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+    return {"status": "cancelled"}
+
+
 # --- Tags & Description ---
 @router.post("/files/tags/{filepath:path}")
 async def set_tags(filepath: str, req: TagsRequest, _=Depends(verify_key)):

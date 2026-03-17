@@ -11,6 +11,7 @@ TRASH_DIR = DOWNLOAD_DIR / ".trash"
 VERSIONS_DIR = DOWNLOAD_DIR / ".versions"
 HLS_DIR = DOWNLOAD_DIR / ".hls"
 REMUX_DIR = DOWNLOAD_DIR / ".remux"
+TEMP_DIR = DOWNLOAD_DIR / "temp"
 DB_PATH = Path(os.getenv("DB_PATH", "/data/proxy.db"))
 
 # Auth
@@ -34,6 +35,7 @@ MAX_VERSIONS = int(os.getenv("MAX_VERSIONS", "5"))
 # Resource limits (for 1.9GB RAM server)
 MAX_HASH_CHUNK = 1024 * 1024  # 1MB chunks for hashing
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024  # 10GB
+CHUNK_SIZE = 5 * 1024 * 1024  # 5MB chunks for upload
 MAX_CONCURRENT_EXTRACT = 1  # Only 1 extraction at a time
 MAX_CONCURRENT_TRANSCODE = 1  # Only 1 transcode at a time
 
@@ -54,4 +56,4 @@ TEXT_EXTS = {
 }
 
 # Hidden system directories
-SYSTEM_DIRS = {".trash", ".versions", ".hls", ".remux"}
+SYSTEM_DIRS = {".trash", ".versions", ".hls", ".remux", "temp"}
