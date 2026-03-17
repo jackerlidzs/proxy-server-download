@@ -91,7 +91,7 @@ async function health(){
   try{
     const d=await api('GET','/health');
     document.getElementById('sDot').className='tb-dot';
-    document.getElementById('sTxt').textContent='v'+d.version;
+    document.getElementById('sTxt').textContent='Online';
     document.getElementById('sDisk').textContent=d.disk_free_gb??'--';
     document.getElementById('sFiles').textContent=d.files_count??0;
     trashCount=d.trash_count||0;
