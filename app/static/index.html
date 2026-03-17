@@ -7,6 +7,27 @@
 <meta name="description" content="Advanced Download Proxy + Media Server with file management, streaming, and deduplication">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
+<!-- CodeMirror 6 -->
+<script type="module" id="cm-init">
+import {EditorView, basicSetup} from 'https://esm.sh/codemirror@6.0.1';
+import {javascript} from 'https://esm.sh/@codemirror/lang-javascript@6.2.2';
+import {html as htmlLang} from 'https://esm.sh/@codemirror/lang-html@6.4.9';
+import {css as cssLang} from 'https://esm.sh/@codemirror/lang-css@6.3.1';
+import {json as jsonLang} from 'https://esm.sh/@codemirror/lang-json@6.0.1';
+import {xml} from 'https://esm.sh/@codemirror/lang-xml@6.1.0';
+import {python} from 'https://esm.sh/@codemirror/lang-python@6.1.6';
+import {php} from 'https://esm.sh/@codemirror/lang-php@6.0.1';
+import {sql} from 'https://esm.sh/@codemirror/lang-sql@6.8.0';
+import {markdown} from 'https://esm.sh/@codemirror/lang-markdown@6.3.1';
+import {oneDark} from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2';
+import {EditorState} from 'https://esm.sh/@codemirror/state@6.4.1';
+import {keymap} from 'https://esm.sh/@codemirror/view@6.35.0';
+// Expose to global scope
+window._CM = {EditorView, basicSetup, EditorState, keymap, oneDark,
+  langs: {javascript, html: htmlLang, css: cssLang, json: jsonLang, xml, python, php, sql, markdown}};
+window._cmReady = true;
+window.dispatchEvent(new Event('cm-ready'));
+</script>
 </head>
 <body>
 
@@ -188,6 +209,7 @@ curl 'https://example.com/file2.rar' \
 </select>
 <button class="btn-s" id="fmSortDirBtn" onclick="fmToggleSortDir()" title="Sort direction">↑</button>
 <div class="fm-divider"></div>
+<button class="btn-s" onclick="fmNewFile()" title="New file">📄+</button>
 <button class="btn-s" onclick="fmMkdir()" title="New folder">📁+</button>
 <button class="btn-s" onclick="document.getElementById('uploadFile').click()" title="Upload">📤</button>
 <button class="btn-s" id="fmViewBtn" onclick="fmToggleView()">☰</button>

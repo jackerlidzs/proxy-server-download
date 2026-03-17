@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, R
 from auth import verify_key
 from models import (
     RenameRequest, BulkDeleteRequest, CreateFolderRequest,
-    CompressRequest, ExtractRequest, TagsRequest, DescriptionRequest, MoveRequest
+    CompressRequest, ExtractRequest, TagsRequest, DescriptionRequest, MoveRequest,
+    CreateFileRequest
 )
 from config import DOWNLOAD_DIR, SERVER_URL
 from utils import safe_path
@@ -88,6 +89,26 @@ async def create_folder(req: CreateFolderRequest, path: str = "", _=Depends(veri
         raise HTTPException(409, "Folder already exists")
     target.mkdir(parents=True)
     return {"message": f"Created folder {req.name}"}
+
+
+@router.post("/files/create")
+async def create_file(req: CreateFileRequest, path: str = "", _=Depends(verify_key)):
+    """Create a new file with optional content."""
+    import re as re_mod
+    fn = req.filename.strip()
+    if not fn or '..' in fn or '/' in fn or '\\' in fn:
+        raise HTTPException(400, "Invalid filename")
+    if not re_mod.match(r'^[\w\-. ]+$', fn):
+        raise HTTPException(400, "Filename contains invalid characters")
+    target_dir = DOWNLOAD_DIR / path if path else DOWNLOAD_DIR
+    if not target_dir.exists():
+        raise HTTPException(404, "Directory not found")
+    fp = target_dir / fn
+    if fp.exists():
+        raise HTTPException(409, f"File '{fn}' already exists")
+    fp.write_text(req.content or "", encoding="utf-8")
+    await index_file(fp)
+    return {"message": f"Created {fn}", "filename": fn}
 
 
 @router.delete("/files/{filename:path}")

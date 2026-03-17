@@ -32,6 +32,11 @@ class MoveRequest(BaseModel):
     destination: str
 
 
+class CreateFileRequest(BaseModel):
+    filename: str
+    content: Optional[str] = ""
+
+
 class CompressRequest(BaseModel):
     filenames: list[str]
     archive_name: str

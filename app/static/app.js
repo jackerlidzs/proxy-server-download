@@ -3,6 +3,7 @@ let K=localStorage.getItem('dp_key')||'',U=localStorage.getItem('dp_url')||'',po
 let fmCurPath='',fmViewMode='grid',fmAllItems=[],fmSelected=new Set(),renameTarget='';
 let trashCount=0,currentUser=localStorage.getItem('dp_user')||'',currentRole=localStorage.getItem('dp_role')||'';
 let fmSort='name',fmSortDir=1,ctxTarget=null,previewPath='',previewDirty=false;
+let _cmEditor=null; // CodeMirror instance
 const TEXT_EXTS=['.txt','.md','.log','.csv','.json','.xml','.yaml','.yml','.ini','.cfg','.conf','.env','.toml','.py','.js','.ts','.html','.css','.jsx','.tsx','.sh','.bash','.bat','.ps1','.c','.cpp','.h','.java','.go','.rs','.rb','.php','.sql','.srt','.vtt','.ass','.ssa','.nfo'];
 const IMG_EXTS=['.jpg','.jpeg','.png','.gif','.webp','.bmp','.svg'];
 const VID_EXTS=['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts'];
@@ -315,6 +316,28 @@ async function fmMkdir(){
   const name=await dlgPrompt('📁 New Folder','Enter folder name:');if(!name)return;
   try{await api('POST','/api/files/mkdir?path='+encodeURIComponent(fmCurPath),{name});toast('Created '+name,'ok');rFiles()}
   catch(e){toast(e.message,'err')}
+}
+async function fmNewFile(){
+  const TEMPLATES={
+    '.html':'<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>Document</title>\n</head>\n<body>\n  \n</body>\n</html>',
+    '.css':'/* styles */\nbody {\n  margin: 0;\n  padding: 0;\n}\n',
+    '.js':'// script\n',
+    '.php':'<?php\n\n?>\n',
+    '.py':'# -*- coding: utf-8 -*-\n',
+    '.sh':'#!/bin/bash\n',
+    '.json':'{\n  \n}\n',
+    '.md':'# Title\n\n'
+  };
+  const name=await dlgPrompt('📄 New File','Enter filename with extension:','newfile.txt');if(!name)return;
+  const ext='.'+name.split('.').pop().toLowerCase();
+  const content=TEMPLATES[ext]||'';
+  try{
+    await api('POST','/api/files/create?path='+encodeURIComponent(fmCurPath),{filename:name,content});
+    toast('Created '+name,'ok');rFiles();
+    // Auto-open in editor
+    const filePath=fmCurPath?fmCurPath+'/'+name:name;
+    if(TEXT_EXTS.includes(ext))setTimeout(()=>openPreview(filePath),300);
+  }catch(e){toast(e.message,'err')}
 }
 async function fmBulkDel(){
   if(!await dlgConfirm('🗑 Delete Files',`Move ${fmSelected.size} items to Recycle Bin?`))return;
@@ -744,6 +767,7 @@ async function copyFile(path){
 // === Preview / Editor ===
 async function openPreview(path){
   previewPath=path;previewDirty=false;
+  if(_cmEditor){_cmEditor.destroy();_cmEditor=null}
   const ext='.'+path.split('.').pop().toLowerCase();
   const title=path.split('/').pop();
   document.getElementById('prevTitle').textContent='📄 '+title;
@@ -771,31 +795,66 @@ async function openPreview(path){
   try{
     const d=await api('GET','/api/files/content/'+encodeURIComponent(path));
     const meta=`<div class="prev-meta"><span>📏 ${d.lines} lines</span><span>📦 ${hs(d.size)}</span><span>🔤 ${d.encoding}</span><span>🏷 ${d.language}</span></div>`;
-    body.innerHTML=meta+`<textarea class="prev-textarea" id="prevEditor" spellcheck="false">${esc(d.content)}</textarea>`;
     document.getElementById('prevSaveBtn').style.display='inline-flex';
-    document.getElementById('prevEditor').addEventListener('input',()=>{previewDirty=true});
-    // Tab key support
-    document.getElementById('prevEditor').addEventListener('keydown',e=>{
-      if(e.key==='Tab'){e.preventDefault();const t=e.target;const s=t.selectionStart,en=t.selectionEnd;t.value=t.value.substring(0,s)+'  '+t.value.substring(en);t.selectionStart=t.selectionEnd=s+2}
-      if(e.ctrlKey&&e.key==='s'){e.preventDefault();savePreview()}
-    });
+    // Try CodeMirror
+    if(window._cmReady){
+      body.innerHTML=meta+'<div id="cmContainer" style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;flex:1;min-height:300px"></div>';
+      const CM=window._CM;
+      const langExt=_cmLang(ext,CM);
+      const exts=[CM.basicSetup,CM.oneDark,CM.keymap.of([{key:'Mod-s',run:()=>{savePreview();return true}}])];
+      if(langExt)exts.push(langExt);
+      const updateListener=CM.EditorView.updateListener.of(u=>{if(u.docChanged)previewDirty=true});
+      exts.push(updateListener);
+      _cmEditor=new CM.EditorView({
+        state:CM.EditorState.create({doc:d.content||'',extensions:exts}),
+        parent:document.getElementById('cmContainer')
+      });
+    }else{
+      // Fallback textarea
+      body.innerHTML=meta+`<textarea class="prev-textarea" id="prevEditor" spellcheck="false">${esc(d.content)}</textarea>`;
+      document.getElementById('prevEditor').addEventListener('input',()=>{previewDirty=true});
+      document.getElementById('prevEditor').addEventListener('keydown',e=>{
+        if(e.key==='Tab'){e.preventDefault();const t=e.target;const s=t.selectionStart,en=t.selectionEnd;t.value=t.value.substring(0,s)+'  '+t.value.substring(en);t.selectionStart=t.selectionEnd=s+2}
+        if(e.ctrlKey&&e.key==='s'){e.preventDefault();savePreview()}
+      });
+    }
   }catch(e){
     body.innerHTML=`<div class="empty"><span>⚠️</span>${esc(e.message||'Cannot preview this file')}</div>`;
   }
 }
+function _cmLang(ext,CM){
+  const L=CM.langs;
+  const m={'.js':L.javascript,'.jsx':L.javascript,'.ts':L.javascript,'.tsx':L.javascript,
+    '.html':L.html,'.htm':L.html,'.php':L.php,
+    '.css':L.css,'.scss':L.css,'.less':L.css,
+    '.json':L.json,'.xml':L.xml,'.svg':L.xml,
+    '.py':L.python,'.sql':L.sql,'.md':L.markdown,
+    '.yaml':null,'.yml':null,'.sh':null,'.bash':null,'.bat':null,
+    '.txt':null,'.log':null,'.csv':null,'.ini':null,'.cfg':null,'.conf':null,'.env':null,'.toml':null,
+    '.c':null,'.cpp':null,'.h':null,'.java':null,'.go':null,'.rs':null,'.rb':null,
+    '.srt':null,'.vtt':null,'.ass':null,'.ssa':null,'.nfo':null};
+  const fn=m[ext];
+  return fn?fn():null;
+}
 function closePreview(){
-  if(previewDirty){dlgConfirm('⚠️ Unsaved Changes','Discard changes and close?').then(ok=>{if(ok){previewDirty=false;document.getElementById('previewM').style.display='none';const v=document.querySelector('#prevBody video');if(v)v.pause();const a=document.querySelector('#prevBody audio');if(a)a.pause()}});return}
+  if(previewDirty){dlgConfirm('⚠️ Unsaved Changes','Discard changes and close?').then(ok=>{if(ok){previewDirty=false;if(_cmEditor){_cmEditor.destroy();_cmEditor=null}document.getElementById('previewM').style.display='none';const v=document.querySelector('#prevBody video');if(v)v.pause();const a=document.querySelector('#prevBody audio');if(a)a.pause()}});return}
+  if(_cmEditor){_cmEditor.destroy();_cmEditor=null}
   document.getElementById('previewM').style.display='none';
   previewDirty=false;
-  // Stop any playing media
   const v=document.querySelector('#prevBody video');if(v)v.pause();
   const a=document.querySelector('#prevBody audio');if(a)a.pause();
 }
 async function savePreview(){
-  const ta=document.getElementById('prevEditor');
-  if(!ta)return;
+  let content='';
+  if(_cmEditor){
+    content=_cmEditor.state.doc.toString();
+  }else{
+    const ta=document.getElementById('prevEditor');
+    if(!ta)return;
+    content=ta.value;
+  }
   try{
-    await api('PUT','/api/files/content/'+encodeURIComponent(previewPath),{content:ta.value});
+    await api('PUT','/api/files/content/'+encodeURIComponent(previewPath),{content});
     toast('Saved! (version backed up)','ok');previewDirty=false;
   }catch(e){toast(e.message,'err')}
 }

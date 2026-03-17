@@ -208,4 +208,12 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
 .fm-sort-sel{padding:4px 8px;background:var(--bg3);border:1px solid var(--bdr);border-radius:var(--rs);color:var(--txt2);font-size:11px;cursor:pointer;font-family:'Inter',sans-serif}
 /* Image thumbnail */
 .fm-thumb{width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:4px}
+/* CodeMirror overrides */
+#cmContainer .cm-editor{height:60vh;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:13px}
+#cmContainer .cm-scroller{overflow:auto}
+#cmContainer .cm-gutters{background:rgba(8,8,16,0.6);border-right:1px solid var(--bdr)}
+#cmContainer .cm-activeLineGutter{background:rgba(124,92,252,.1)}
+#cmContainer .cm-activeLine{background:rgba(124,92,252,.06)}
+#cmContainer .cm-selectionBackground{background:rgba(124,92,252,.2)!important}
+#cmContainer .cm-cursor{border-left-color:var(--pri2)}
 
