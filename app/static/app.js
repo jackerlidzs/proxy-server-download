@@ -1718,7 +1718,7 @@ const UPM={
     for(const f of fileList){
       const tc=Math.ceil(f.size/this.CHUNK)||1;
       this.files.push({
-        id:crypto.randomUUID(),file:f,name:f.name,size:f.size,
+        id:(crypto.randomUUID||(()=>'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=crypto.getRandomValues?crypto.getRandomValues(new Uint8Array(1))[0]&15:Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)})))(),file:f,name:f.name,size:f.size,
         path:path||'',status:'pending',chunkSize:this.CHUNK,
         totalChunks:tc,chunkIndex:0,loaded:0,percent:0,
         speed:0,eta:0,retries:0,xhr:null,error:'',
