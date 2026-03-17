@@ -828,20 +828,28 @@ async function openPreview(path){
     const meta=`<div class="prev-meta"><span>📏 ${d.lines} lines</span><span>📦 ${hs(d.size)}</span>${encBadge}<span>🏷 ${d.language}</span></div>`;
     if(d.encoding_warning)toast(d.encoding_warning,'warn');
     document.getElementById('prevSaveBtn').style.display='inline-flex';
-    // Try CodeMirror
+    // Try CodeMirror (with full fallback if ANY extension fails)
+    let cmOk=false;
     if(window._cmReady){
-      body.innerHTML=meta+'<div id="cmContainer" style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;flex:1;min-height:300px"></div>';
-      const CM=window._CM;
-      const langExt=_cmLang(ext,CM);
-      const exts=[CM.basicSetup,CM.oneDark,CM.keymap.of([{key:'Mod-s',run:()=>{savePreview();return true}}])];
-      if(langExt)exts.push(langExt);
-      const updateListener=CM.EditorView.updateListener.of(u=>{if(u.docChanged)previewDirty=true});
-      exts.push(updateListener);
-      _cmEditor=new CM.EditorView({
-        state:CM.EditorState.create({doc:d.content||'',extensions:exts}),
-        parent:document.getElementById('cmContainer')
-      });
-    }else{
+      try{
+        body.innerHTML=meta+'<div id="cmContainer" style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;flex:1;min-height:300px"></div>';
+        const CM=window._CM;
+        const langExt=_cmLang(ext,CM);
+        const exts=[CM.basicSetup,CM.oneDark,CM.keymap.of([{key:'Mod-s',run:()=>{savePreview();return true}}])];
+        if(langExt)exts.push(langExt);
+        const updateListener=CM.EditorView.updateListener.of(u=>{if(u.docChanged)previewDirty=true});
+        exts.push(updateListener);
+        _cmEditor=new CM.EditorView({
+          state:CM.EditorState.create({doc:d.content||'',extensions:exts}),
+          parent:document.getElementById('cmContainer')
+        });
+        cmOk=true;
+      }catch(cmErr){
+        console.warn('CodeMirror init failed, using textarea:',cmErr);
+        if(_cmEditor){try{_cmEditor.destroy()}catch(e){}; _cmEditor=null}
+      }
+    }
+    if(!cmOk){
       // Fallback textarea
       body.innerHTML=meta+`<textarea class="prev-textarea" id="prevEditor" spellcheck="false">${esc(d.content)}</textarea>`;
       document.getElementById('prevEditor').addEventListener('input',()=>{previewDirty=true});
