@@ -5,6 +5,7 @@ With cancel (kill subprocess) and resume support
 import re
 import uuid
 import shlex
+import shutil
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -154,6 +155,19 @@ async def dl_curl(tid, url, headers, filename, resume=False):
                 ct_type = ll.split(":", 1)[1].strip()
     except:
         pass
+
+    # --- Disk space pre-check ---
+    if total > 0:
+        try:
+            disk = shutil.disk_usage(str(DOWNLOAD_DIR))
+            if total > disk.free:
+                downloads[tid].update({
+                    "status": "failed", "speed": "",
+                    "error": f"Not enough disk space. File: {human_size(total)}, Free: {human_size(disk.free)}. Free up space or delete files."
+                })
+                return False, f"Not enough disk space. File: {human_size(total)}, Free: {human_size(disk.free)}"
+        except Exception:
+            pass
 
     cmd = ["curl_chrome", "-L", "-S", "--max-redirs", "10", "--retry", "3", "--retry-delay", "3",
            "--connect-timeout", "30", "--max-time", "7200", "-o", str(fp)]

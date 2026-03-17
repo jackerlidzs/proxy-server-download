@@ -866,7 +866,8 @@ function _cmLang(ext,CM){
     '.c':null,'.cpp':null,'.h':null,'.java':null,'.go':null,'.rs':null,'.rb':null,
     '.srt':null,'.vtt':null,'.ass':null,'.ssa':null,'.nfo':null};
   const fn=m[ext];
-  return fn?fn():null;
+  if(!fn)return null;
+  try{return fn()}catch(e){console.warn('CodeMirror lang failed for',ext,e);return null}
 }
 function closePreview(){
   if(previewDirty){dlgConfirm('⚠️ Unsaved Changes','Discard changes and close?').then(ok=>{if(ok){previewDirty=false;if(_cmEditor){_cmEditor.destroy();_cmEditor=null}document.getElementById('previewM').style.display='none';const v=document.querySelector('#prevBody video');if(v)v.pause();const a=document.querySelector('#prevBody audio');if(a)a.pause()}});return}

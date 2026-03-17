@@ -5,8 +5,9 @@ With progress tracking, cancel, ETA, and speed
 """
 import re
 import uuid
-import asyncio
 import time
+import shutil
+import asyncio
 from pathlib import Path
 from datetime import datetime
 
@@ -346,6 +347,27 @@ async def extract_archive(filename: str, delete_after: bool = False,
 
     # Calculate total archive size for ETA
     total_size = _get_archive_size(fp, group)
+
+    # --- Disk space pre-check ---
+    try:
+        disk = shutil.disk_usage(str(base_dir))
+        free_space = disk.free
+        # Estimate extracted size: archive_size * 1.1 (compression ratio safety margin)
+        estimated_size = int(total_size * 1.1) if total_size > 0 else 0
+        # If deleting archives after, we'll recover that space
+        recoverable = total_size if delete_after else 0
+        needed = estimated_size - recoverable
+        if needed > 0 and needed > free_space:
+            return {
+                "success": False,
+                "error": f"Not enough disk space. Need ~{human_size(needed)}, only {human_size(free_space)} free. "
+                         f"Archive size: {human_size(total_size)}. "
+                         f"Consider enabling 'Delete after extract' or freeing up space.",
+                "disk_free": free_space,
+                "estimated_size": estimated_size
+            }
+    except Exception:
+        pass  # Don't block extraction if disk check fails
 
     extract_tasks[eid] = {
         "task_id": eid, "status": "extracting", "filename": fp.name,
