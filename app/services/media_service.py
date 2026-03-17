@@ -9,7 +9,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 
-from config import DOWNLOAD_DIR, HLS_DIR, VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, SERVER_URL, SYSTEM_DIRS, MAX_CONCURRENT_TRANSCODE
+from config import DOWNLOAD_DIR, HLS_DIR, REMUX_DIR, VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, SERVER_URL, SYSTEM_DIRS, MAX_CONCURRENT_TRANSCODE
 
 transcode_semaphore: asyncio.Semaphore = None
 _active_transcodes: dict = {}
@@ -103,6 +103,26 @@ def _parse_fps(fps_str: str) -> float:
             return round(int(num) / int(den), 2) if int(den) > 0 else 0
         return round(float(fps_str), 2)
     except:
+        return 0
+
+
+async def quick_probe_duration(filepath: Path) -> float:
+    """Quick probe to get only duration (lightweight, no full metadata scan)."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_format", "-show_entries", "format=duration",
+            str(filepath)
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            return 0
+        data = json.loads(out.decode(errors="ignore"))
+        return float(data.get("format", {}).get("duration", 0))
+    except Exception:
         return 0
 
 
@@ -381,4 +401,209 @@ async def cleanup_hls(filepath: Path):
     hls_dir = get_hls_dir(filepath)
     if hls_dir.exists():
         shutil.rmtree(hls_dir)
+
+
+# ===== Remux to MP4 Faststart =====
+
+_active_remuxes: dict = {}
+
+# Browser-native containers that support seeking
+BROWSER_NATIVE_CONTAINERS = {".mp4", ".m4v", ".webm"}
+# Codecs browsers can play natively
+BROWSER_VIDEO_CODECS = {"h264", "vp8", "vp9", "av1"}
+
+
+def get_remux_path(filepath: Path) -> Path:
+    """Get the cached remuxed MP4 path for a video file."""
+    vid_hash = _video_hash(filepath)
+    REMUX_DIR.mkdir(parents=True, exist_ok=True)
+    return REMUX_DIR / f"{vid_hash}_{filepath.stem}.mp4"
+
+
+def get_remux_status(filepath: Path) -> dict:
+    """Check remux status for a video file."""
+    remux_path = get_remux_path(filepath)
+    vid_hash = _video_hash(filepath)
+    rel_remux = str(remux_path.relative_to(DOWNLOAD_DIR))
+
+    if remux_path.exists() and remux_path.stat().st_size > 0:
+        return {
+            "status": "ready",
+            "remux_url": f"{SERVER_URL}/stream/{rel_remux}",
+            "path": str(remux_path),
+            "size": remux_path.stat().st_size,
+        }
+
+    if vid_hash in _active_remuxes:
+        return {"status": "remuxing", "progress": _active_remuxes[vid_hash]}
+
+    return {"status": "not_started"}
+
+
+async def check_needs_remux(filepath: Path) -> dict:
+    """Check if a video file needs remuxing for browser playback.
+    Returns info about whether remux is needed and why.
+    """
+    ext = filepath.suffix.lower()
+    result = {
+        "needs_remux": False,
+        "reason": "",
+        "container": ext,
+        "codec": "unknown",
+        "duration": 0,
+    }
+
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", "-show_format", "-select_streams", "v:0", str(filepath),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        info = json.loads(out.decode())
+        streams = info.get("streams", [])
+        fmt = info.get("format", {})
+        duration = float(fmt.get("duration", 0))
+
+        if not duration and streams:
+            duration = float(streams[0].get("duration", 0))
+        result["duration"] = duration
+
+        if not streams:
+            return result
+
+        codec = streams[0].get("codec_name", "").lower()
+        result["codec"] = codec
+
+        # Check 1: Non-native container (MKV, AVI, etc.)
+        if ext not in BROWSER_NATIVE_CONTAINERS:
+            if codec in BROWSER_VIDEO_CODECS:
+                result["needs_remux"] = True
+                result["reason"] = f"Container {ext} not browser-native, but codec {codec} is compatible — remux only"
+            else:
+                result["needs_remux"] = True
+                result["reason"] = f"Container {ext} and codec {codec} not browser-compatible — needs transcode"
+                result["needs_transcode"] = True
+            return result
+
+        # Check 2: MP4 with non-browser codec (HEVC etc.)
+        if codec not in BROWSER_VIDEO_CODECS:
+            result["needs_remux"] = True
+            result["needs_transcode"] = True
+            result["reason"] = f"Codec {codec} not browser-compatible — needs transcode"
+            return result
+
+        # Check 3: MP4 — check if moov atom is at start (faststart)
+        # If file has faststart, browser can seek immediately
+        # We detect this by checking if ffprobe can read duration quickly
+        if duration > 0:
+            result["needs_remux"] = False
+            result["reason"] = "Browser-compatible container and codec with valid duration"
+        else:
+            result["needs_remux"] = True
+            result["reason"] = "MP4 missing duration metadata or moov atom — needs faststart remux"
+
+        return result
+    except Exception as e:
+        result["reason"] = f"Probe failed: {str(e)}"
+        return result
+
+
+async def remux_to_mp4(filepath: Path) -> dict:
+    """Remux video to MP4 with faststart (no re-encoding, very fast).
+    For files with incompatible codecs, full transcode is used instead.
+    """
+    vid_hash = _video_hash(filepath)
+    remux_path = get_remux_path(filepath)
+
+    # Already done
+    if remux_path.exists() and remux_path.stat().st_size > 0:
+        rel_remux = str(remux_path.relative_to(DOWNLOAD_DIR))
+        return {"status": "ready", "remux_url": f"{SERVER_URL}/stream/{rel_remux}"}
+
+    # Already in progress
+    if vid_hash in _active_remuxes:
+        return {"status": "remuxing", "progress": _active_remuxes[vid_hash]}
+
+    # Check what kind of remux is needed
+    check = await check_needs_remux(filepath)
+
+    _active_remuxes[vid_hash] = {"percent": 0, "type": "starting"}
+    REMUX_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Run in background
+    asyncio.create_task(_do_remux(filepath, remux_path, vid_hash, check))
+
+    return {"status": "started", "needs_transcode": check.get("needs_transcode", False)}
+
+
+async def _do_remux(filepath: Path, remux_path: Path, vid_hash: str, check_info: dict):
+    """Background remux task."""
+    try:
+        duration = check_info.get("duration", 0)
+        needs_transcode = check_info.get("needs_transcode", False)
+        temp_path = remux_path.with_suffix(".tmp.mp4")
+
+        if needs_transcode:
+            # Full transcode: re-encode to H.264+AAC
+            _active_remuxes[vid_hash] = {"percent": 0, "type": "transcoding"}
+            cmd = [
+                "ffmpeg", "-y", "-i", str(filepath),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                "-threads", "2",
+                str(temp_path)
+            ]
+        else:
+            # Fast remux: copy streams, only change container to MP4 faststart
+            _active_remuxes[vid_hash] = {"percent": 0, "type": "remuxing"}
+            cmd = [
+                "ffmpeg", "-y", "-i", str(filepath),
+                "-c", "copy",
+                "-movflags", "+faststart",
+                str(temp_path)
+            ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # Read stderr for progress
+        while True:
+            line = await proc.stderr.readline()
+            if not line:
+                break
+            dec = line.decode(errors="ignore")
+            m = re.search(r'time=(\d+):(\d+):(\d+)', dec)
+            if m and duration > 0:
+                elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+                pct = min(99, int(elapsed / duration * 100))
+                rtype = "transcoding" if needs_transcode else "remuxing"
+                _active_remuxes[vid_hash] = {"percent": pct, "type": rtype}
+
+        await proc.wait()
+
+        if proc.returncode == 0 and temp_path.exists() and temp_path.stat().st_size > 0:
+            # Rename temp to final
+            temp_path.rename(remux_path)
+            _active_remuxes.pop(vid_hash, None)
+        else:
+            # Clean up on failure
+            if temp_path.exists():
+                temp_path.unlink()
+            _active_remuxes[vid_hash] = {"percent": -1, "type": "failed", "error": "FFmpeg failed"}
+    except Exception as e:
+        _active_remuxes[vid_hash] = {"percent": -1, "type": "failed", "error": str(e)}
+
+
+async def cleanup_remux(filepath: Path):
+    """Remove cached remuxed file for a video."""
+    remux_path = get_remux_path(filepath)
+    if remux_path.exists():
+        remux_path.unlink()
 

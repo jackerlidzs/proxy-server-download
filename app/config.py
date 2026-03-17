@@ -10,6 +10,7 @@ DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/downloads"))
 TRASH_DIR = DOWNLOAD_DIR / ".trash"
 VERSIONS_DIR = DOWNLOAD_DIR / ".versions"
 HLS_DIR = DOWNLOAD_DIR / ".hls"
+REMUX_DIR = DOWNLOAD_DIR / ".remux"
 DB_PATH = Path(os.getenv("DB_PATH", "/data/proxy.db"))
 
 # Auth
@@ -53,4 +54,4 @@ TEXT_EXTS = {
 }
 
 # Hidden system directories
-SYSTEM_DIRS = {".trash", ".versions", ".hls"}
+SYSTEM_DIRS = {".trash", ".versions", ".hls", ".remux"}

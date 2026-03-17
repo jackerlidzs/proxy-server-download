@@ -654,6 +654,7 @@ const VP={
   qualityWrap:null,qualityMenu:null,qualityBtn:null,
   controls:null,nowP:null,playerE:null,
   _inited:false,_hideTimer:null,_currentName:'',_isSeeking:false,_savedVol:1,
+  _isTranscodeStream:false,_transcodeBaseUrl:'',_seekDebounce:null,_transcodeOffset:0,
 
   init(){
     if(this._inited)return;
@@ -800,9 +801,17 @@ const VP={
     this.nowP.innerHTML='🎬 <strong>'+esc(name)+'</strong>'+hlsBadge+' <button class="btn-s" style="margin-left:auto" onclick="window.open(\''+url+'\')">↗ Open</button>';
 
     // Load source
+    this._isTranscodeStream=false;
+    this._transcodeBaseUrl='';
+    this._transcodeOffset=0;
     if(isHls){
       this._loadHls(hlsMasterUrl);
     }else{
+      // Track if this is a transcode stream for seek handling
+      if(url.includes('/stream-transcode/')){
+        this._isTranscodeStream=true;
+        this._transcodeBaseUrl=url.split('?')[0];
+      }
       this.v.src=url;
       this.v.load();
     }
@@ -988,30 +997,94 @@ const VP={
     localStorage.removeItem('vp_pos_'+this._currentName);
   },
 
+  _getDuration(){
+    // Use browser duration if valid, otherwise fallback to probe duration
+    const vd=this.v.duration;
+    if(vd&&isFinite(vd)&&vd>0)return vd;
+    return this._knownDuration||0;
+  },
+
   _onTimeUpdate(){
     if(this._isSeeking)return;
     const v=this.v;
-    if(!v.duration||isNaN(v.duration))return;
-    const pct=(v.currentTime/v.duration)*100;
-    this.played.style.width=pct+'%';
-    this.scrubber.style.left=pct+'%';
-    this.timeCur.textContent=this._fmtTime(v.currentTime);
+    const dur=this._getDuration();
+    if(!dur)return;
+    // For transcode streams, add the seek offset
+    const actualTime=v.currentTime+(this._transcodeOffset||0);
+    const pct=(actualTime/dur)*100;
+    this.played.style.width=Math.min(pct,100)+'%';
+    this.scrubber.style.left=Math.min(pct,100)+'%';
+    this.timeCur.textContent=this._fmtTime(actualTime);
+    this.timeDur.textContent=this._fmtTime(dur);
     // Auto-save position every 5 seconds
-    if(Math.floor(v.currentTime)%5===0&&this._currentName){
-      localStorage.setItem('vp_pos_'+this._currentName,v.currentTime.toFixed(1));
+    if(Math.floor(actualTime)%5===0&&this._currentName){
+      localStorage.setItem('vp_pos_'+this._currentName,actualTime.toFixed(1));
     }
   },
 
   _onMeta(){
-    this.timeDur.textContent=this._fmtTime(this.v.duration);
+    const dur=this._getDuration();
+    if(dur>0)this.timeDur.textContent=this._fmtTime(dur);
+  },
+
+  _setKnownDuration(seconds){
+    // Set duration display immediately from probe data (before video loads)
+    if(seconds>0){
+      this._knownDuration=seconds;
+      this.timeDur.textContent=this._fmtTime(seconds);
+    }
+  },
+
+  // Remux polling
+  _remuxPollId:null,
+  _remuxPath:'',
+
+  _pollRemux(path){
+    if(this._remuxPollId)clearInterval(this._remuxPollId);
+    this._remuxPath=path;
+    const self=this;
+    this._remuxPollId=setInterval(async()=>{
+      try{
+        const r=await api('GET','/api/media/remux-status/'+encodeURIComponent(path));
+        if(r.status==='ready'&&r.remux_url){
+          clearInterval(self._remuxPollId);self._remuxPollId=null;
+          // Switch to seekable remuxed version
+          const curTime=self.v.currentTime||0;
+          const wasPlaying=!self.v.paused;
+          self.v.src=r.remux_url;
+          self.v.load();
+          self.v.addEventListener('loadedmetadata',function once(){
+            if(curTime>2)self.v.currentTime=curTime;
+            if(wasPlaying)self.v.play().catch(()=>{});
+            self.v.removeEventListener('loadedmetadata',once);
+          });
+          // Update now playing badge
+          const badge=self.nowP.querySelector('.remux-badge');
+          if(badge)badge.innerHTML='✅ Seekable';
+          toast('Video now seekable! 🎯','ok');
+        }else if(r.status==='remuxing'&&r.progress){
+          const badge=self.nowP.querySelector('.remux-badge');
+          if(badge){
+            const pct=r.progress.percent||0;
+            const type=r.progress.type||'remuxing';
+            badge.innerHTML=`<span class="spin"></span> ${type} ${pct}%`;
+          }
+        }
+      }catch(e){}
+    },2000);
+  },
+
+  stopRemuxPoll(){
+    if(this._remuxPollId){clearInterval(this._remuxPollId);this._remuxPollId=null}
   },
 
   _onBuffer(){
     const v=this.v;
     if(v.buffered.length>0){
       const end=v.buffered.end(v.buffered.length-1);
-      const pct=(end/(v.duration||1))*100;
-      this.buffered.style.width=pct+'%';
+      const dur=this._getDuration()||1;
+      const pct=(end/dur)*100;
+      this.buffered.style.width=Math.min(pct,100)+'%';
     }
   },
 
@@ -1024,7 +1097,25 @@ const VP={
       const pct=Math.max(0,Math.min(1,(ev.clientX-rect.left)/rect.width));
       self.played.style.width=(pct*100)+'%';
       self.scrubber.style.left=(pct*100)+'%';
-      if(self.v.duration)self.v.currentTime=pct*self.v.duration;
+      const dur=self._getDuration();
+      if(dur>0){
+        const seekTime=pct*dur;
+        self.timeCur.textContent=self._fmtTime(seekTime);
+        if(self._isTranscodeStream&&self._transcodeBaseUrl){
+          // Debounce transcode seek — restart ffmpeg from new position
+          clearTimeout(self._seekDebounce);
+          self._seekDebounce=setTimeout(()=>{
+            self.buffer.classList.add('show');
+            self.v.src=self._transcodeBaseUrl+'?ss='+seekTime.toFixed(1);
+            self.v.load();
+            self.v.play().catch(()=>{});
+            // Track the offset so time display is correct
+            self._transcodeOffset=seekTime;
+          },300);
+        }else{
+          self.v.currentTime=seekTime;
+        }
+      }
     };
     seek(e);
     const onMove=ev=>seek(ev);
@@ -1041,8 +1132,9 @@ const VP={
     const rect=this.progressWrap.getBoundingClientRect();
     const pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
     const ht=document.getElementById('vpHoverTime');
-    if(this.v.duration){
-      ht.textContent=this._fmtTime(pct*this.v.duration);
+    const dur=this._getDuration();
+    if(dur>0){
+      ht.textContent=this._fmtTime(pct*dur);
       ht.style.left=(e.clientX-rect.left)+'px';
     }
   },
@@ -1091,11 +1183,10 @@ window.addEventListener('beforeunload',()=>VP._savePosition());
 
 // === Play media file from File Manager ===
 async function playMediaFile(path){
-  // Navigate to Media tab using the app's go() function
+  // Navigate to Media tab
   const mediaBtn=document.querySelector('.sb-item[onclick*="media"]');
   if(mediaBtn)go('media',mediaBtn);
   else{
-    // Fallback: manually switch pages
     document.querySelectorAll('.sb-item').forEach(s=>s.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
     const mp=document.getElementById('p-media');
@@ -1103,36 +1194,97 @@ async function playMediaFile(path){
     document.getElementById('pageTitle').textContent='Media';
     rMedia();
   }
-  // Build stream URL - probe codec for browser compatibility
-  const filename=path.split('/').pop();
-  const directUrl=base()+'/stream/'+encodeURIComponent(path);
-  // Check if video needs transcoding
-  const ext='.'+filename.split('.').pop().toLowerCase();
-  const browserNativeExts=['.mp4','.webm','.m4v'];
-  let streamUrl=directUrl;
-  if(VID_EXTS.includes(ext)&&!browserNativeExts.includes(ext)){
-    // MKV/AVI/FLV etc — likely needs transcoding, probe to confirm
-    try{
-      const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
-      if(probe.needs_transcode)streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
-    }catch(e){
-      // If probe fails, try transcode for non-native containers
-      streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
-    }
-  } else if(VID_EXTS.includes(ext)){
-    // MP4/WebM — probe to check codec (could be HEVC in MP4)
-    try{
-      const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
-      if(probe.needs_transcode)streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
-    }catch(e){}
-  }
-  // Try to find subtitles from media API data
-  api('GET','/api/media').then(d=>{
-    const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
-    playM(filename,streamUrl,m&&m.subtitles?m.subtitles:[]);
-  }).catch(()=>playM(filename,streamUrl,[]));
-}
 
+  const filename=path.split('/').pop();
+  const ext='.'+filename.split('.').pop().toLowerCase();
+  const isVideo=VID_EXTS.includes(ext);
+  const isAudio=AUD_EXTS.includes(ext);
+
+  // Stop any existing remux polling
+  VP.stopRemuxPoll();
+
+  // For audio files — just direct stream
+  if(isAudio){
+    const directUrl=base()+'/stream/'+encodeURIComponent(path);
+    api('GET','/api/media').then(d=>{
+      const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
+      playM(filename,directUrl,m&&m.subtitles?m.subtitles:[]);
+    }).catch(()=>playM(filename,directUrl,[]));
+    return;
+  }
+
+  // For video files — probe first for duration + remux status
+  try{
+    const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
+    const duration=probe.duration||0;
+    const remux=probe.remux||{};
+
+    // Set duration immediately (before video loads)
+    VP.init();
+    if(duration>0)VP._setKnownDuration(duration);
+
+    let streamUrl;
+    let needsRemux=false;
+
+    // Check if remuxed version is already available
+    if(remux.status==='ready'&&remux.remux_url){
+      // Use seekable remuxed version!
+      streamUrl=remux.remux_url;
+    }else if(probe.browser_compatible&&!probe.needs_remux){
+      // Direct stream — already browser compatible & seekable
+      streamUrl=base()+'/stream/'+encodeURIComponent(path);
+    }else if(probe.needs_transcode){
+      // Needs full transcode — use stream-transcode for now
+      streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
+      needsRemux=true;
+    }else if(probe.needs_remux){
+      // Needs remux only (fast) — use direct stream temporarily
+      streamUrl=base()+'/stream/'+encodeURIComponent(path);
+      needsRemux=true;
+    }else{
+      // Fallback: direct stream
+      streamUrl=base()+'/stream/'+encodeURIComponent(path);
+    }
+
+    // Trigger background remux if needed (auto for ALL non-seekable videos)
+    if(needsRemux&&remux.status!=='ready'){
+      if(remux.status==='not_started'){
+        try{
+          await api('POST','/api/media/remux/'+encodeURIComponent(path));
+        }catch(e){console.warn('Remux trigger failed:',e)}
+      }
+    }
+
+    // Get subtitles and play
+    api('GET','/api/media').then(d=>{
+      const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
+      playM(filename,streamUrl,m&&m.subtitles?m.subtitles:[]);
+
+      // If remuxing, add badge and start polling
+      if(needsRemux&&remux.status!=='ready'){
+        const badge=VP.nowP.querySelector('.remux-badge');
+        if(!badge){
+          const typeLabel=probe.needs_transcode?'Transcoding':'Remuxing';
+          VP.nowP.innerHTML+=' <span class="remux-badge" style="color:var(--ylw);font-size:11px;margin-left:8px"><span class="spin"></span> '+typeLabel+'... (will auto-switch)</span>';
+        }
+        VP._pollRemux(path);
+      }else if(remux.status==='ready'){
+        VP.nowP.innerHTML+=' <span class="remux-badge" style="color:var(--grn);font-size:11px;margin-left:8px">✅ Seekable</span>';
+      }else if(probe.browser_compatible){
+        VP.nowP.innerHTML+=' <span class="remux-badge" style="color:var(--grn);font-size:11px;margin-left:8px">✅ Direct Play</span>';
+      }
+    }).catch(()=>playM(filename,streamUrl,[]));
+
+  }catch(e){
+    // Probe failed — fallback to old behavior
+    console.warn('Probe failed, using fallback:',e);
+    const directUrl=base()+'/stream/'+encodeURIComponent(path);
+    api('GET','/api/media').then(d=>{
+      const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
+      playM(filename,directUrl,m&&m.subtitles?m.subtitles:[]);
+    }).catch(()=>playM(filename,directUrl,[]));
+  }
+}
 function playM(name,url,subs){
   VP.load(name,url,subs,false,null);
 }

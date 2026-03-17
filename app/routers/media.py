@@ -9,7 +9,8 @@ from auth import verify_key
 from config import DOWNLOAD_DIR, VIDEO_EXTS
 from services.media_service import (
     list_media, get_media_info, generate_thumbnail, extract_subtitles,
-    convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls
+    convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls,
+    get_remux_status, check_needs_remux, remux_to_mp4, cleanup_remux
 )
 
 router = APIRouter(tags=["media"])
@@ -173,45 +174,42 @@ async def stream(filename: str, request: Request):
     })
 
 
-# --- Probe codec for browser compatibility ---
+# --- Probe codec for browser compatibility + remux status ---
 BROWSER_VIDEO_CODECS = {"h264", "vp8", "vp9", "av1"}
 BROWSER_CONTAINERS = {".mp4", ".webm", ".mov", ".m4v"}
 
 @router.get("/api/media/probe/{filepath:path}")
 async def probe_compat(filepath: str, _=Depends(verify_key)):
-    """Check if video codec is browser-compatible. Also returns duration."""
-    import asyncio, json
+    """Check if video codec is browser-compatible. Returns duration and remux status."""
     fp = DOWNLOAD_DIR / filepath
     if not fp.exists():
         raise HTTPException(404)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_streams", "-show_format", "-select_streams", "v:0", str(fp),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        info = json.loads(out.decode())
-        streams = info.get("streams", [])
-        fmt = info.get("format", {})
-        duration = float(fmt.get("duration", 0))
-        if not streams:
-            return {"needs_transcode": False, "codec": "unknown", "duration": duration}
-        codec = streams[0].get("codec_name", "").lower()
-        # Get duration from stream if format didn't have it
-        if not duration:
-            duration = float(streams[0].get("duration", 0))
-        container_ok = fp.suffix.lower() in BROWSER_CONTAINERS
+        # Use the comprehensive check_needs_remux
+        check = await check_needs_remux(fp)
+        remux = get_remux_status(fp)
+
+        codec = check.get("codec", "unknown")
+        container = check.get("container", fp.suffix.lower())
+        duration = check.get("duration", 0)
+        needs_remux = check.get("needs_remux", False)
+        needs_transcode = check.get("needs_transcode", False)
+
+        container_ok = container in BROWSER_CONTAINERS
         codec_ok = codec in BROWSER_VIDEO_CODECS
+
         return {
-            "needs_transcode": not (container_ok and codec_ok),
+            "needs_transcode": needs_transcode or (not container_ok and not codec_ok),
+            "needs_remux": needs_remux,
             "codec": codec,
-            "container": fp.suffix.lower(),
-            "browser_compatible": container_ok and codec_ok,
-            "duration": duration
+            "container": container,
+            "browser_compatible": container_ok and codec_ok and not needs_remux,
+            "duration": duration,
+            "reason": check.get("reason", ""),
+            "remux": remux,
         }
     except Exception as e:
-        return {"needs_transcode": False, "codec": "unknown", "error": str(e), "duration": 0}
+        return {"needs_transcode": False, "needs_remux": False, "codec": "unknown", "error": str(e), "duration": 0, "remux": {"status": "not_started"}}
 
 
 # --- On-the-fly transcoding stream (ffmpeg → H.264+AAC in fragmented MP4) ---
@@ -223,6 +221,10 @@ async def stream_transcode(filename: str, request: Request, ss: float = 0):
     fp = DOWNLOAD_DIR / filename
     if not fp.exists():
         raise HTTPException(404)
+
+    # Quick probe for duration (to pass in headers)
+    from services.media_service import quick_probe_duration
+    duration = await quick_probe_duration(fp)
 
     # Build ffmpeg command with optional seek
     cmd = ["ffmpeg"]
@@ -259,8 +261,44 @@ async def stream_transcode(filename: str, request: Request, ss: float = 0):
             except Exception:
                 pass
 
-    return StreamingResponse(generate(), media_type="video/mp4", headers={
+    headers = {
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "no-cache",
-    })
+    }
+    if duration > 0:
+        headers["X-Video-Duration"] = str(duration)
+
+    return StreamingResponse(generate(), media_type="video/mp4", headers=headers)
+
+
+# --- Remux API ---
+@router.post("/api/media/remux/{filepath:path}")
+async def api_remux(filepath: str, _=Depends(verify_key)):
+    """Trigger background remux of video to MP4 faststart."""
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+    if fp.suffix.lower() not in VIDEO_EXTS:
+        raise HTTPException(400, "Not a video file")
+    result = await remux_to_mp4(fp)
+    return result
+
+
+@router.get("/api/media/remux-status/{filepath:path}")
+async def api_remux_status(filepath: str, _=Depends(verify_key)):
+    """Check remux status for a video file."""
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+    return get_remux_status(fp)
+
+
+@router.delete("/api/media/remux/{filepath:path}")
+async def api_remux_cleanup(filepath: str, _=Depends(verify_key)):
+    """Remove cached remuxed file."""
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+    await cleanup_remux(fp)
+    return {"message": "Remux cache removed"}
 
