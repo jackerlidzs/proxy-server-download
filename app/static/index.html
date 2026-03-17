@@ -7,34 +7,34 @@
 <meta name="description" content="Advanced Download Proxy + Media Server with file management, streaming, and deduplication">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
-<!-- CodeMirror 6 (?deps= pins shared deps to same URL for deduplication) -->
+<!-- CodeMirror 6 (bare esm.sh - no version pinning to avoid export mismatches) -->
 <script type="module" id="cm-init">
-const DEPS='deps=@codemirror/state@6.4.1,@codemirror/view@6.35.0,@codemirror/language@6.10.6,@lezer/common@1.2.3,@lezer/highlight@1.2.1,@lezer/lr@1.4.2,style-mod@4.1.2';
-const u=p=>`https://esm.sh/${p}?${DEPS}`;
 try{
-  const [{EditorView,basicSetup},{EditorState},{keymap},{oneDark},
-    {javascript},{html:htmlLang},{css:cssLang},{json:jsonLang},
-    {xml},{python},{php},{sql},{markdown}] = await Promise.all([
-    import(u('codemirror@6.0.1')),
-    import(u('@codemirror/state@6.4.1')),
-    import(u('@codemirror/view@6.35.0')),
-    import(u('@codemirror/theme-one-dark@6.1.2')),
-    import(u('@codemirror/lang-javascript@6.2.2')),
-    import(u('@codemirror/lang-html@6.4.9')),
-    import(u('@codemirror/lang-css@6.3.1')),
-    import(u('@codemirror/lang-json@6.0.1')),
-    import(u('@codemirror/lang-xml@6.1.0')),
-    import(u('@codemirror/lang-python@6.1.6')),
-    import(u('@codemirror/lang-php@6.0.1')),
-    import(u('@codemirror/lang-sql@6.8.0')),
-    import(u('@codemirror/lang-markdown@6.3.1'))
+  const cm = await import('https://esm.sh/codemirror');
+  const state = await import('https://esm.sh/@codemirror/state');
+  const view = await import('https://esm.sh/@codemirror/view');
+  const theme = await import('https://esm.sh/@codemirror/theme-one-dark');
+  const [js,ht,cs,jn,xm,py,ph,sq,md] = await Promise.all([
+    import('https://esm.sh/@codemirror/lang-javascript'),
+    import('https://esm.sh/@codemirror/lang-html'),
+    import('https://esm.sh/@codemirror/lang-css'),
+    import('https://esm.sh/@codemirror/lang-json'),
+    import('https://esm.sh/@codemirror/lang-xml'),
+    import('https://esm.sh/@codemirror/lang-python'),
+    import('https://esm.sh/@codemirror/lang-php'),
+    import('https://esm.sh/@codemirror/lang-sql'),
+    import('https://esm.sh/@codemirror/lang-markdown')
   ]);
-  window._CM = {EditorView, basicSetup, EditorState, keymap, oneDark,
-    langs: {javascript, html: htmlLang, css: cssLang, json: jsonLang, xml, python, php, sql, markdown}};
+  window._CM = {
+    EditorView: cm.EditorView, basicSetup: cm.basicSetup,
+    EditorState: state.EditorState, keymap: view.keymap, oneDark: theme.oneDark,
+    langs: {javascript:js.javascript, html:ht.html, css:cs.css, json:jn.json,
+            xml:xm.xml, python:py.python, php:ph.php, sql:sq.sql, markdown:md.markdown}
+  };
   window._cmReady = true;
   window.dispatchEvent(new Event('cm-ready'));
 }catch(e){
-  console.error('CodeMirror load failed:',e);
+  console.warn('CodeMirror load failed, using textarea:',e);
   window._cmReady = false;
 }
 </script>
