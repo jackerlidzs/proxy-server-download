@@ -256,15 +256,18 @@ function renderDL(items){
 }
 // Navigate from download list to file in File Manager
 function navigateToFile(filename){
-  // Extract directory from filename (e.g., 'sub/file.txt' → 'sub')
   const parts=filename.split('/');
-  const dir=parts.length>1?parts.slice(0,-1).join('/'):''; 
+  const dir=parts.length>1?parts.slice(0,-1).join('/'):'';
+  const ext='.'+filename.split('.').pop().toLowerCase();
+  // Media files → play directly
+  if(VID_EXTS.includes(ext)||AUD_EXTS.includes(ext)){
+    playMediaFile(filename);
+    return;
+  }
+  // Other files → just navigate to folder in File Manager
   fmCurPath=dir;
-  // Switch to File Manager tab
   const fmTab=document.querySelector('.sb-item[onclick*="fm"]');
   if(fmTab)go('fm',fmTab);
-  // After files load, open preview
-  setTimeout(()=>openPreview(filename),500);
 }
 
 // File Manager
