@@ -7,26 +7,36 @@
 <meta name="description" content="Advanced Download Proxy + Media Server with file management, streaming, and deduplication">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
-<!-- CodeMirror 6 (bundle-deps ensures single @codemirror/state instance) -->
+<!-- CodeMirror 6 (?deps= pins shared deps to same URL for deduplication) -->
 <script type="module" id="cm-init">
-import {EditorView, basicSetup} from 'https://esm.sh/codemirror@6.0.1?bundle-deps';
-import {EditorState} from 'https://esm.sh/@codemirror/state@6.4.1?bundle-deps';
-import {keymap} from 'https://esm.sh/@codemirror/view@6.35.0?bundle-deps';
-import {oneDark} from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2?bundle-deps';
-import {javascript} from 'https://esm.sh/@codemirror/lang-javascript@6.2.2?bundle-deps';
-import {html as htmlLang} from 'https://esm.sh/@codemirror/lang-html@6.4.9?bundle-deps';
-import {css as cssLang} from 'https://esm.sh/@codemirror/lang-css@6.3.1?bundle-deps';
-import {json as jsonLang} from 'https://esm.sh/@codemirror/lang-json@6.0.1?bundle-deps';
-import {xml} from 'https://esm.sh/@codemirror/lang-xml@6.1.0?bundle-deps';
-import {python} from 'https://esm.sh/@codemirror/lang-python@6.1.6?bundle-deps';
-import {php} from 'https://esm.sh/@codemirror/lang-php@6.0.1?bundle-deps';
-import {sql} from 'https://esm.sh/@codemirror/lang-sql@6.8.0?bundle-deps';
-import {markdown} from 'https://esm.sh/@codemirror/lang-markdown@6.3.1?bundle-deps';
-// Expose to global scope
-window._CM = {EditorView, basicSetup, EditorState, keymap, oneDark,
-  langs: {javascript, html: htmlLang, css: cssLang, json: jsonLang, xml, python, php, sql, markdown}};
-window._cmReady = true;
-window.dispatchEvent(new Event('cm-ready'));
+const DEPS='deps=@codemirror/state@6.4.1,@codemirror/view@6.35.0,@codemirror/language@6.10.6,@lezer/common@1.2.3,@lezer/highlight@1.2.1,@lezer/lr@1.4.2,style-mod@4.1.2';
+const u=p=>`https://esm.sh/${p}?${DEPS}`;
+try{
+  const [{EditorView,basicSetup},{EditorState},{keymap},{oneDark},
+    {javascript},{html:htmlLang},{css:cssLang},{json:jsonLang},
+    {xml},{python},{php},{sql},{markdown}] = await Promise.all([
+    import(u('codemirror@6.0.1')),
+    import(u('@codemirror/state@6.4.1')),
+    import(u('@codemirror/view@6.35.0')),
+    import(u('@codemirror/theme-one-dark@6.1.2')),
+    import(u('@codemirror/lang-javascript@6.2.2')),
+    import(u('@codemirror/lang-html@6.4.9')),
+    import(u('@codemirror/lang-css@6.3.1')),
+    import(u('@codemirror/lang-json@6.0.1')),
+    import(u('@codemirror/lang-xml@6.1.0')),
+    import(u('@codemirror/lang-python@6.1.6')),
+    import(u('@codemirror/lang-php@6.0.1')),
+    import(u('@codemirror/lang-sql@6.8.0')),
+    import(u('@codemirror/lang-markdown@6.3.1'))
+  ]);
+  window._CM = {EditorView, basicSetup, EditorState, keymap, oneDark,
+    langs: {javascript, html: htmlLang, css: cssLang, json: jsonLang, xml, python, php, sql, markdown}};
+  window._cmReady = true;
+  window.dispatchEvent(new Event('cm-ready'));
+}catch(e){
+  console.error('CodeMirror load failed:',e);
+  window._cmReady = false;
+}
 </script>
 </head>
 <body>
