@@ -304,9 +304,11 @@ function renderFM(){
     el.innerHTML='<div class="fm-grid">'+items.map(f=>{
       const ic=icons[f.type]||'📄';
       const ext=(f.ext||'').toLowerCase();
+      const isMedia=VID_EXTS.includes(ext)||AUD_EXTS.includes(ext);
       const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
+        isMedia?`ondblclick="playMediaFile('${esc(f.path)}')"`:
         (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:
-        f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`:f.download_url?`ondblclick="window.open('${f.download_url}')"`:'';
+        f.download_url?`ondblclick="window.open('${f.download_url}')"`:'';
       const archBtn=f.type==='archive'?`<button class="btn-o" style="position:absolute;bottom:4px;right:4px;font-size:9px;padding:2px 5px" onclick="event.stopPropagation();extractF('${esc(f.path)}')">📦</button>`:'';
       // Image thumbnail
       let thumb='';
@@ -318,9 +320,10 @@ function renderFM(){
     el.innerHTML=`<div class="fm-list"><div class="fm-row fm-row-h"><div onclick="fmSetSort('name')" style="cursor:pointer">Name <span class="sort-arrow">${sa('name')}</span></div><div onclick="fmSetSort('size')" style="cursor:pointer">Size <span class="sort-arrow">${sa('size')}</span></div><div onclick="fmSetSort('type')" style="cursor:pointer">Type <span class="sort-arrow">${sa('type')}</span></div></div>`+items.map(f=>{
       const ic=icons[f.type]||'📄';
       const ext=(f.ext||'').toLowerCase();
+      const isMedia=VID_EXTS.includes(ext)||AUD_EXTS.includes(ext);
       const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
-        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:
-        f.stream_url?`ondblclick="playM('${esc(f.name)}','${f.stream_url}',[])"`
+        isMedia?`ondblclick="playMediaFile('${esc(f.path)}')"`:
+        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`
         :f.download_url?`ondblclick="window.open('${f.download_url}')"`:''
       return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div></div>`;
     }).join('')+'</div>';
@@ -1082,6 +1085,30 @@ const VP={
 // Save position when leaving page
 window.addEventListener('beforeunload',()=>VP._savePosition());
 
+// === Play media file from File Manager ===
+function playMediaFile(path){
+  // Navigate to Media tab using the app's go() function
+  const mediaBtn=document.querySelector('.sb-item[onclick*="media"]');
+  if(mediaBtn)go('media',mediaBtn);
+  else{
+    // Fallback: manually switch pages
+    document.querySelectorAll('.sb-item').forEach(s=>s.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    const mp=document.getElementById('p-media');
+    if(mp)mp.classList.add('active');
+    document.getElementById('pageTitle').textContent='Media';
+    rMedia();
+  }
+  // Build stream URL and play
+  const filename=path.split('/').pop();
+  const streamUrl=base()+'/stream/'+encodeURIComponent(path);
+  // Try to find subtitles from media API data
+  api('GET','/api/media').then(d=>{
+    const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
+    playM(filename,streamUrl,m&&m.subtitles?m.subtitles:[]);
+  }).catch(()=>playM(filename,streamUrl,[]));
+}
+
 function playM(name,url,subs){
   VP.load(name,url,subs,false,null);
 }
@@ -1235,8 +1262,14 @@ function ctxAction(act){
   document.getElementById('ctxMenu').style.display='none';
   if(!ctxTarget)return;
   const f=fmAllItems.find(i=>i.path===ctxTarget);
+  const ext='.'+ctxTarget.split('.').pop().toLowerCase();
+  const isMedia=VID_EXTS.includes(ext)||AUD_EXTS.includes(ext);
   switch(act){
-    case 'open':if(f&&f.type==='folder')fmGo(f.path);else openPreview(ctxTarget);break;
+    case 'open':
+      if(f&&f.type==='folder')fmGo(f.path);
+      else if(isMedia)playMediaFile(ctxTarget);
+      else openPreview(ctxTarget);
+      break;
     case 'edit':openPreview(ctxTarget);break;
     case 'copy':copyFile(ctxTarget);break;
     case 'rename':if(f)showRename(ctxTarget,f.name);break;
@@ -1271,14 +1304,16 @@ async function openPreview(path){
     body.innerHTML=`<img class="prev-img" src="${base()}/files/${path}" alt="${esc(title)}">`;
     return;
   }
-  // Video
+  // Video — redirect to Media tab with custom player
   if(VID_EXTS.includes(ext)){
-    body.innerHTML=`<video class="prev-video" controls autoplay><source src="${base()}/stream/${path}"></video>`;
+    document.getElementById('previewM').style.display='none';
+    playMediaFile(path);
     return;
   }
-  // Audio
+  // Audio — redirect to Media tab with custom player
   if(AUD_EXTS.includes(ext)){
-    body.innerHTML=`<div style="padding:20px;text-align:center"><div style="font-size:64px;margin-bottom:16px">🎵</div><audio controls autoplay style="width:100%"><source src="${base()}/stream/${path}"></audio></div>`;
+    document.getElementById('previewM').style.display='none';
+    playMediaFile(path);
     return;
   }
   // Text / Code
@@ -1487,7 +1522,9 @@ document.addEventListener('keydown', e => {
   if(e.key === 'Enter' && fmSelected.size === 1) {
     e.preventDefault();
     const path = [...fmSelected][0];
-    openPreview(path);
+    const ext = '.'+path.split('.').pop().toLowerCase();
+    if(VID_EXTS.includes(ext)||AUD_EXTS.includes(ext))playMediaFile(path);
+    else openPreview(path);
   }
 
   // F2 — Rename selected file (single selection only)
