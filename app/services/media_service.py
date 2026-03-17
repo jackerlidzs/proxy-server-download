@@ -18,6 +18,7 @@ _active_transcodes: dict = {}
 HLS_PROFILES = [
     {"name": "480p", "height": 480, "bitrate": "1200k", "audio_br": "96k"},
     {"name": "720p", "height": 720, "bitrate": "2500k", "audio_br": "128k"},
+    {"name": "1080p", "height": 1080, "bitrate": "3500k", "audio_br": "192k"},
 ]
 
 

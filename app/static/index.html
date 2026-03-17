@@ -238,9 +238,69 @@ curl 'https://example.com/file2.rar' \
 
 <!-- ====== Media Page ====== -->
 <div id="p-media" class="page">
-<div class="player-wrap" id="playerW">
-<div class="player-empty" id="playerE"><span>🎬</span><p>Select a video to play</p></div>
-<video id="vp" controls style="display:none"></video>
+<div class="vp-container" id="playerW">
+  <div class="vp-wrapper" id="vpWrapper">
+    <div class="player-empty" id="playerE"><span>🎬</span><p>Select a video to play</p></div>
+    <video id="vp" playsinline preload="metadata" style="display:none"></video>
+    <!-- Buffering spinner -->
+    <div class="vp-buffer" id="vpBuffer"><div class="vp-buffer-spin"></div></div>
+    <!-- Big play overlay -->
+    <div class="vp-big-play" id="vpBigPlay" title="Play">▶</div>
+    <!-- Controls bar -->
+    <div class="vp-controls" id="vpControls">
+      <!-- Progress bar row -->
+      <div class="vp-progress-wrap" id="vpProgressWrap">
+        <div class="vp-progress-bar">
+          <div class="vp-buffered" id="vpBuffered"></div>
+          <div class="vp-played" id="vpPlayed"></div>
+          <div class="vp-scrubber" id="vpScrubber"></div>
+        </div>
+        <div class="vp-hover-time" id="vpHoverTime">0:00</div>
+      </div>
+      <!-- Buttons row -->
+      <div class="vp-btns-row">
+        <div class="vp-btns-left">
+          <button class="vp-btn" id="vpPlayBtn" title="Play (Space)">▶</button>
+          <div class="vp-time"><span id="vpTimeCur">0:00</span> / <span id="vpTimeDur">0:00</span></div>
+        </div>
+        <div class="vp-btns-right">
+          <!-- Volume -->
+          <div class="vp-vol-wrap">
+            <button class="vp-btn" id="vpMuteBtn" title="Mute (M)">🔊</button>
+            <input type="range" class="vp-vol-slider" id="vpVolSlider" min="0" max="1" step="0.05" value="1">
+          </div>
+          <!-- Speed -->
+          <div class="vp-speed-wrap">
+            <button class="vp-btn vp-speed-btn" id="vpSpeedBtn" title="Playback Speed">1x</button>
+            <div class="vp-speed-menu" id="vpSpeedMenu">
+              <div class="vp-speed-opt" data-speed="0.25">0.25x</div>
+              <div class="vp-speed-opt" data-speed="0.5">0.5x</div>
+              <div class="vp-speed-opt active" data-speed="1">1x</div>
+              <div class="vp-speed-opt" data-speed="1.25">1.25x</div>
+              <div class="vp-speed-opt" data-speed="1.5">1.5x</div>
+              <div class="vp-speed-opt" data-speed="2">2x</div>
+            </div>
+          </div>
+          <!-- Subtitles -->
+          <div class="vp-sub-wrap" id="vpSubWrap" style="display:none">
+            <button class="vp-btn" id="vpSubBtn" title="Subtitles">CC</button>
+            <div class="vp-sub-menu" id="vpSubMenu">
+              <div class="vp-sub-opt active" data-idx="-1">Off</div>
+            </div>
+          </div>
+          <!-- Quality (HLS) -->
+          <div class="vp-quality-wrap" id="vpQualityWrap" style="display:none">
+            <button class="vp-btn vp-quality-btn" id="vpQualityBtn" title="Quality">HD</button>
+            <div class="vp-quality-menu" id="vpQualityMenu">
+              <div class="vp-quality-opt active" data-level="-1">Auto</div>
+            </div>
+          </div>
+          <!-- Fullscreen -->
+          <button class="vp-btn" id="vpFsBtn" title="Fullscreen (F)">⛶</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 <div id="nowP" class="now-playing" style="display:none"></div>
 <div class="card">

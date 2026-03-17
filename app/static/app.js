@@ -250,7 +250,7 @@ function renderDL(items){
     const sz=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
     const t=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
     const ic={extracting:'📦',compressing:'🗜️',cancelled:'⏸'}[d.status]||'📄';
-    const nameClick=d.status==='completed'&&d.filename?` onclick="navigateToFile('${d.filename.replace(/'/g,"\\'")}')"; style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px"`:'';
+    const nameClick=d.status==='completed'&&d.filename?` onclick="navigateToFile('${d.filename.replace(/'/g,"\\'")}')"; style="cursor:pointer"`:'';
     return`<div class="dl-i"><div class="dl-top"><div class="dl-name"${nameClick}>${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
   }).join('');
 }
@@ -639,31 +639,456 @@ function renderM(items){
   }).join('');
 }
 let hlsPlayer=null;
+
+// === Custom Video Player Controller ===
+const VP={
+  v:null,wrap:null,playBtn:null,muteBtn:null,volSlider:null,speedBtn:null,
+  fsBtn:null,timeCur:null,timeDur:null,played:null,buffered:null,scrubber:null,
+  progressWrap:null,bigPlay:null,buffer:null,speedMenu:null,subWrap:null,subMenu:null,subBtn:null,
+  qualityWrap:null,qualityMenu:null,qualityBtn:null,
+  controls:null,nowP:null,playerE:null,
+  _inited:false,_hideTimer:null,_currentName:'',_isSeeking:false,_savedVol:1,
+
+  init(){
+    if(this._inited)return;
+    this.v=document.getElementById('vp');
+    this.wrap=document.getElementById('vpWrapper');
+    this.playBtn=document.getElementById('vpPlayBtn');
+    this.muteBtn=document.getElementById('vpMuteBtn');
+    this.volSlider=document.getElementById('vpVolSlider');
+    this.speedBtn=document.getElementById('vpSpeedBtn');
+    this.fsBtn=document.getElementById('vpFsBtn');
+    this.timeCur=document.getElementById('vpTimeCur');
+    this.timeDur=document.getElementById('vpTimeDur');
+    this.played=document.getElementById('vpPlayed');
+    this.buffered=document.getElementById('vpBuffered');
+    this.scrubber=document.getElementById('vpScrubber');
+    this.progressWrap=document.getElementById('vpProgressWrap');
+    this.bigPlay=document.getElementById('vpBigPlay');
+    this.buffer=document.getElementById('vpBuffer');
+    this.speedMenu=document.getElementById('vpSpeedMenu');
+    this.subWrap=document.getElementById('vpSubWrap');
+    this.subMenu=document.getElementById('vpSubMenu');
+    this.subBtn=document.getElementById('vpSubBtn');
+    this.qualityWrap=document.getElementById('vpQualityWrap');
+    this.qualityMenu=document.getElementById('vpQualityMenu');
+    this.qualityBtn=document.getElementById('vpQualityBtn');
+    this.controls=document.getElementById('vpControls');
+    this.nowP=document.getElementById('nowP');
+    this.playerE=document.getElementById('playerE');
+    if(!this.v)return;
+
+    const self=this;
+
+    // Play/Pause
+    this.playBtn.addEventListener('click',e=>{e.stopPropagation();self.togglePlay()});
+    this.bigPlay.addEventListener('click',e=>{e.stopPropagation();self.togglePlay()});
+    this.wrap.addEventListener('click',e=>{
+      if(e.target.closest('.vp-controls,.vp-speed-menu,.vp-sub-menu'))return;
+      self.togglePlay();
+    });
+    this.wrap.addEventListener('dblclick',e=>{
+      if(e.target.closest('.vp-controls'))return;
+      self.toggleFs();
+    });
+
+    // Video events
+    this.v.addEventListener('play',()=>self._onPlayState());
+    this.v.addEventListener('pause',()=>self._onPlayState());
+    this.v.addEventListener('ended',()=>self._onEnded());
+    this.v.addEventListener('timeupdate',()=>self._onTimeUpdate());
+    this.v.addEventListener('loadedmetadata',()=>self._onMeta());
+    this.v.addEventListener('progress',()=>self._onBuffer());
+    this.v.addEventListener('waiting',()=>{self.buffer.classList.add('show')});
+    this.v.addEventListener('playing',()=>{self.buffer.classList.remove('show')});
+    this.v.addEventListener('canplay',()=>{self.buffer.classList.remove('show')});
+
+    // Progress bar (seek)
+    this.progressWrap.addEventListener('mousedown',e=>{self._startSeek(e)});
+    this.progressWrap.addEventListener('mousemove',e=>{self._hoverSeek(e)});
+
+    // Volume
+    this.muteBtn.addEventListener('click',e=>{e.stopPropagation();self.toggleMute()});
+    this.volSlider.addEventListener('input',()=>{
+      self.v.volume=parseFloat(self.volSlider.value);
+      self.v.muted=false;
+      self._updateVolIcon();
+      localStorage.setItem('vp_vol',self.volSlider.value);
+    });
+
+    // Restore saved volume
+    const sv=localStorage.getItem('vp_vol');
+    if(sv!==null){this.v.volume=parseFloat(sv);this.volSlider.value=sv}
+
+    // Speed
+    this.speedMenu.querySelectorAll('.vp-speed-opt').forEach(opt=>{
+      opt.addEventListener('click',e=>{
+        e.stopPropagation();
+        const spd=parseFloat(opt.dataset.speed);
+        self.v.playbackRate=spd;
+        self.speedBtn.textContent=spd===1?'1x':spd+'x';
+        self.speedMenu.querySelectorAll('.vp-speed-opt').forEach(o=>o.classList.remove('active'));
+        opt.classList.add('active');
+      });
+    });
+
+    // Fullscreen
+    this.fsBtn.addEventListener('click',e=>{e.stopPropagation();self.toggleFs()});
+    document.addEventListener('fullscreenchange',()=>self._onFsChange());
+
+    // Controls auto-hide
+    this.wrap.addEventListener('mousemove',()=>self._showControls());
+    this.wrap.addEventListener('mouseleave',()=>self._scheduleHide());
+
+    // Keyboard (only when media page active)
+    document.addEventListener('keydown',e=>{
+      if(e.target.matches('input,textarea,select'))return;
+      if(document.querySelector('.modal-bg[style*="flex"]'))return;
+      const mp=document.getElementById('p-media');
+      if(!mp||!mp.classList.contains('active'))return;
+      if(!self.v.src)return;
+      switch(e.key){
+        case ' ':case 'k':case 'K':e.preventDefault();self.togglePlay();break;
+        case 'm':case 'M':e.preventDefault();self.toggleMute();break;
+        case 'f':case 'F':e.preventDefault();self.toggleFs();break;
+        case 'ArrowLeft':e.preventDefault();self.v.currentTime=Math.max(0,self.v.currentTime-10);break;
+        case 'ArrowRight':e.preventDefault();self.v.currentTime=Math.min(self.v.duration||0,self.v.currentTime+10);break;
+        case 'ArrowUp':e.preventDefault();self.v.volume=Math.min(1,self.v.volume+0.1);self.volSlider.value=self.v.volume;self._updateVolIcon();break;
+        case 'ArrowDown':e.preventDefault();self.v.volume=Math.max(0,self.v.volume-0.1);self.volSlider.value=self.v.volume;self._updateVolIcon();break;
+      }
+    });
+
+    this._inited=true;
+  },
+
+  load(name,url,subs,isHls,hlsMasterUrl){
+    this.init();
+    // Save position of previous video
+    this._savePosition();
+
+    if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}
+    this._currentName=name;
+    this.v.querySelectorAll('track').forEach(t=>t.remove());
+
+    // Show video, hide placeholder
+    this.playerE.style.display='none';
+    this.v.style.display='block';
+    this.bigPlay.classList.add('show');
+    this.buffer.classList.remove('show');
+    this.wrap.classList.add('paused');
+
+    // Reset UI
+    this.played.style.width='0%';
+    this.buffered.style.width='0%';
+    this.scrubber.style.left='0%';
+    this.timeCur.textContent='0:00';
+    this.timeDur.textContent='0:00';
+    this.playBtn.textContent='▶';
+    // Hide quality selector by default (only shown for HLS)
+    this.qualityWrap.style.display='none';
+
+    // Now playing bar
+    const hlsBadge=isHls?' <span style="color:var(--grn);font-size:11px;margin-left:4px">📡 HLS Adaptive</span>':'';
+    this.nowP.style.display='flex';
+    this.nowP.innerHTML='🎬 <strong>'+esc(name)+'</strong>'+hlsBadge+' <button class="btn-s" style="margin-left:auto" onclick="window.open(\''+url+'\')">↗ Open</button>';
+
+    // Load source
+    if(isHls){
+      this._loadHls(hlsMasterUrl);
+    }else{
+      this.v.src=url;
+      this.v.load();
+    }
+
+    // Subtitles
+    this._setupSubs(subs);
+
+    // Restore position
+    const savedTime=localStorage.getItem('vp_pos_'+name);
+    if(savedTime){
+      const t=parseFloat(savedTime);
+      if(t>2){
+        this.v.addEventListener('loadedmetadata',function once(){
+          this.currentTime=t;
+          this.removeEventListener('loadedmetadata',once);
+        });
+        toast(`Resuming from ${VP._fmtTime(t)}`,'info');
+      }
+    }
+
+    // Highlight in list
+    document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
+    const mc=document.getElementById('mc-'+name);if(mc)mc.classList.add('playing');
+    document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
+  },
+
+  _loadHls(masterUrl){
+    const self=this;
+    if(typeof Hls!=='undefined'&&Hls.isSupported()){
+      hlsPlayer=new Hls({
+        maxBufferLength:30,
+        maxMaxBufferLength:60,
+        startLevel:-1, // auto
+        capLevelToPlayerSize:true
+      });
+      hlsPlayer.loadSource(masterUrl);
+      hlsPlayer.attachMedia(self.v);
+      hlsPlayer.on(Hls.Events.MANIFEST_PARSED,(e,data)=>{
+        self._setupQuality(data.levels);
+      });
+      // Error recovery
+      hlsPlayer.on(Hls.Events.ERROR,(e,data)=>{
+        if(data.fatal){
+          switch(data.type){
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hlsPlayer.recoverMediaError();
+              break;
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              toast('Network error — retrying...','err');
+              setTimeout(()=>hlsPlayer.startLoad(),2000);
+              break;
+            default:
+              toast('Fatal playback error','err');
+              break;
+          }
+        }
+      });
+      // Track auto level switching for quality badge
+      hlsPlayer.on(Hls.Events.LEVEL_SWITCHED,(e,data)=>{
+        self._onLevelSwitch(data.level);
+      });
+    }else if(self.v.canPlayType('application/vnd.apple.mpegurl')){
+      // Safari native HLS
+      self.v.src=masterUrl;
+      self.v.load();
+    }
+  },
+
+  _setupQuality(levels){
+    if(!levels||!levels.length){
+      this.qualityWrap.style.display='none';
+      return;
+    }
+    this.qualityWrap.style.display='block';
+    const resLabels={2160:'4K',1440:'1440p',1080:'1080p',720:'720p',480:'480p',360:'360p',240:'240p'};
+    let html='<div class="vp-quality-opt active" data-level="-1">Auto <span class="vp-quality-badge">ABR</span></div>';
+    levels.forEach((lv,i)=>{
+      const h=lv.height||0;
+      const label=resLabels[h]||(h?h+'p':'Level '+(i+1));
+      const br=lv.bitrate?Math.round(lv.bitrate/1000)+'k':'';
+      html+=`<div class="vp-quality-opt" data-level="${i}">${label}${br?' <span style="color:var(--txt3);font-size:10px">'+br+'</span>':''}</div>`;
+    });
+    this.qualityMenu.innerHTML=html;
+    this.qualityBtn.textContent='Auto';
+
+    // Bind clicks
+    const self=this;
+    this.qualityMenu.querySelectorAll('.vp-quality-opt').forEach(opt=>{
+      opt.addEventListener('click',e=>{
+        e.stopPropagation();
+        const lvl=parseInt(opt.dataset.level);
+        if(hlsPlayer)hlsPlayer.currentLevel=lvl;
+        self.qualityMenu.querySelectorAll('.vp-quality-opt').forEach(o=>o.classList.remove('active'));
+        opt.classList.add('active');
+        if(lvl===-1){
+          self.qualityBtn.textContent='Auto';
+        }else{
+          const h=levels[lvl]?.height;
+          self.qualityBtn.textContent=resLabels[h]||h+'p';
+        }
+      });
+    });
+  },
+
+  _onLevelSwitch(level){
+    // Update quality badge when auto-switching
+    if(!hlsPlayer||hlsPlayer.currentLevel!==-1)return; // Only update in auto mode
+    const levels=hlsPlayer.levels;
+    if(levels&&levels[level]){
+      const h=levels[level].height;
+      const resLabels={2160:'4K',1440:'1440p',1080:'1080p',720:'720p',480:'480p',360:'360p'};
+      this.qualityBtn.textContent='Auto';
+      // Flash the current quality briefly
+      this.qualityBtn.title='Quality: '+(resLabels[h]||h+'p');
+    }
+  },
+
+  _setupSubs(subs){
+    if(!subs||!subs.length){
+      this.subWrap.style.display='none';
+      return;
+    }
+    this.subWrap.style.display='block';
+    // Build menu
+    let html='<div class="vp-sub-opt active" data-idx="-1">Off</div>';
+    subs.forEach((s,i)=>{
+      // Add track to video
+      const t=document.createElement('track');
+      t.kind='subtitles';t.label=s.filename;t.src=s.url;
+      t.srclang=s.language||'und';
+      this.v.appendChild(t);
+      html+=`<div class="vp-sub-opt" data-idx="${i}">${esc(s.filename)}</div>`;
+    });
+    this.subMenu.innerHTML=html;
+
+    // Bind clicks
+    const self=this;
+    this.subMenu.querySelectorAll('.vp-sub-opt').forEach(opt=>{
+      opt.addEventListener('click',e=>{
+        e.stopPropagation();
+        const idx=parseInt(opt.dataset.idx);
+        self.subMenu.querySelectorAll('.vp-sub-opt').forEach(o=>o.classList.remove('active'));
+        opt.classList.add('active');
+        // Toggle tracks
+        for(let i=0;i<self.v.textTracks.length;i++){
+          self.v.textTracks[i].mode=(i===idx)?'showing':'hidden';
+        }
+        self.subBtn.style.color=(idx>=0)?'var(--pri2)':'';
+      });
+    });
+  },
+
+  togglePlay(){
+    if(!this.v.src)return;
+    if(this.v.paused||this.v.ended){this.v.play().catch(()=>{})}
+    else{this.v.pause()}
+  },
+
+  toggleMute(){
+    this.v.muted=!this.v.muted;
+    this._updateVolIcon();
+  },
+
+  toggleFs(){
+    const w=this.wrap;
+    if(document.fullscreenElement===w){document.exitFullscreen().catch(()=>{})}
+    else{w.requestFullscreen().catch(()=>{})}
+  },
+
+  _onPlayState(){
+    const paused=this.v.paused;
+    this.playBtn.textContent=paused?'▶':'⏸';
+    this.bigPlay.classList.toggle('show',paused);
+    this.wrap.classList.toggle('paused',paused);
+    if(!paused)this._scheduleHide();
+  },
+
+  _onEnded(){
+    this.playBtn.textContent='▶';
+    this.bigPlay.classList.add('show');
+    this.wrap.classList.add('paused');
+    // Clear saved position on completion
+    localStorage.removeItem('vp_pos_'+this._currentName);
+  },
+
+  _onTimeUpdate(){
+    if(this._isSeeking)return;
+    const v=this.v;
+    if(!v.duration||isNaN(v.duration))return;
+    const pct=(v.currentTime/v.duration)*100;
+    this.played.style.width=pct+'%';
+    this.scrubber.style.left=pct+'%';
+    this.timeCur.textContent=this._fmtTime(v.currentTime);
+    // Auto-save position every 5 seconds
+    if(Math.floor(v.currentTime)%5===0&&this._currentName){
+      localStorage.setItem('vp_pos_'+this._currentName,v.currentTime.toFixed(1));
+    }
+  },
+
+  _onMeta(){
+    this.timeDur.textContent=this._fmtTime(this.v.duration);
+  },
+
+  _onBuffer(){
+    const v=this.v;
+    if(v.buffered.length>0){
+      const end=v.buffered.end(v.buffered.length-1);
+      const pct=(end/(v.duration||1))*100;
+      this.buffered.style.width=pct+'%';
+    }
+  },
+
+  _startSeek(e){
+    e.preventDefault();e.stopPropagation();
+    this._isSeeking=true;
+    const self=this;
+    const seek=ev=>{
+      const rect=self.progressWrap.getBoundingClientRect();
+      const pct=Math.max(0,Math.min(1,(ev.clientX-rect.left)/rect.width));
+      self.played.style.width=(pct*100)+'%';
+      self.scrubber.style.left=(pct*100)+'%';
+      if(self.v.duration)self.v.currentTime=pct*self.v.duration;
+    };
+    seek(e);
+    const onMove=ev=>seek(ev);
+    const onUp=()=>{
+      self._isSeeking=false;
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+    };
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+  },
+
+  _hoverSeek(e){
+    const rect=this.progressWrap.getBoundingClientRect();
+    const pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+    const ht=document.getElementById('vpHoverTime');
+    if(this.v.duration){
+      ht.textContent=this._fmtTime(pct*this.v.duration);
+      ht.style.left=(e.clientX-rect.left)+'px';
+    }
+  },
+
+  _updateVolIcon(){
+    if(this.v.muted||this.v.volume===0)this.muteBtn.textContent='🔇';
+    else if(this.v.volume<0.5)this.muteBtn.textContent='🔉';
+    else this.muteBtn.textContent='🔊';
+    this.volSlider.value=this.v.muted?0:this.v.volume;
+  },
+
+  _showControls(){
+    this.wrap.classList.add('show-controls');
+    clearTimeout(this._hideTimer);
+    if(!this.v.paused)this._scheduleHide();
+  },
+
+  _scheduleHide(){
+    clearTimeout(this._hideTimer);
+    this._hideTimer=setTimeout(()=>{
+      if(!this.v.paused)this.wrap.classList.remove('show-controls');
+    },2500);
+  },
+
+  _onFsChange(){
+    this.fsBtn.textContent=document.fullscreenElement?'⛶':'⛶';
+  },
+
+  _savePosition(){
+    if(this._currentName&&this.v&&this.v.currentTime>2){
+      localStorage.setItem('vp_pos_'+this._currentName,this.v.currentTime.toFixed(1));
+    }
+  },
+
+  _fmtTime(s){
+    if(!s||isNaN(s))return'0:00';
+    s=Math.floor(s);
+    const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+    if(h>0)return h+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+    return m+':'+String(sec).padStart(2,'0');
+  }
+};
+
+// Save position when leaving page
+window.addEventListener('beforeunload',()=>VP._savePosition());
+
 function playM(name,url,subs){
-  if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}
-  const v=document.getElementById('vp');const e=document.getElementById('playerE');const n=document.getElementById('nowP');
-  v.querySelectorAll('track').forEach(t=>t.remove());
-  v.src=url;v.style.display='block';e.style.display='none';
-  n.style.display='flex';n.innerHTML='🎬 <strong>'+esc(name)+'</strong> <button class="btn-s" style="margin-left:auto" onclick="window.open(\''+url+'\')">↗ Open</button>';
-  if(subs&&subs.length)subs.forEach((s,i)=>{const t=document.createElement('track');t.kind='subtitles';t.label=s.filename;t.src=s.url;if(i===0)t.default=true;v.appendChild(t)});
-  v.play().catch(()=>{});
-  document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
-  const c=document.getElementById('mc-'+name);if(c)c.classList.add('playing');
-  document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
+  VP.load(name,url,subs,false,null);
 }
 function loadHlsLib(){return new Promise((res,rej)=>{if(window.Hls)return res();const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/hls.js@latest';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
 async function playHls(name,masterUrl,subs){
   try{await loadHlsLib()}catch{toast('Failed to load HLS.js','err');return}
-  if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}
-  const v=document.getElementById('vp');const e=document.getElementById('playerE');const n=document.getElementById('nowP');
-  v.querySelectorAll('track').forEach(t=>t.remove());
-  v.style.display='block';e.style.display='none';
-  n.style.display='flex';n.innerHTML='📡 <strong>'+esc(name)+' (HLS)</strong> <span style="color:var(--grn);font-size:11px">Adaptive</span>';
-  if(Hls.isSupported()){hlsPlayer=new Hls();hlsPlayer.loadSource(masterUrl);hlsPlayer.attachMedia(v);hlsPlayer.on(Hls.Events.MANIFEST_PARSED,()=>v.play().catch(()=>{}))};
-  if(subs&&subs.length)subs.forEach((s,i)=>{const t=document.createElement('track');t.kind='subtitles';t.label=s.filename;t.src=s.url;if(i===0)t.default=true;v.appendChild(t)});
-  document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
-  const c=document.getElementById('mc-'+name);if(c)c.classList.add('playing');
-  document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
+  VP.load(name,masterUrl,subs,true,masterUrl);
 }
 async function startHls(path){
   try{const r=await api('POST','/api/media/hls/'+encodeURIComponent(path));toast('HLS transcoding '+r.status,'ok');setTimeout(()=>rMedia(),2000)}
@@ -966,6 +1391,10 @@ async function savePreview(){
     document.body.appendChild(box);
   }
   document.addEventListener('mousedown',e=>{
+    // Only allow drag-select when File Manager page is active and has items
+    const fmPage=document.getElementById('p-fm');
+    if(!fmPage||!fmPage.classList.contains('active'))return;
+    if(!fmAllItems||!fmAllItems.length)return;
     const body=fmBody();if(!body||!body.contains(e.target))return;
     // Don't start drag on buttons, inputs, context menu, modals
     if(e.target.closest('button,input,textarea,select,.ctx-menu,.modal-bg,.btn-s,.btn-d,.cp'))return;
