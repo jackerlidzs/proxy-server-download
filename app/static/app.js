@@ -794,7 +794,9 @@ async function openPreview(path){
   // Text / Code
   try{
     const d=await api('GET','/api/files/content/'+encodeURIComponent(path));
-    const meta=`<div class="prev-meta"><span>📏 ${d.lines} lines</span><span>📦 ${hs(d.size)}</span><span>🔤 ${d.encoding}</span><span>🏷 ${d.language}</span></div>`;
+    const encBadge=d.encoding_warning?`<span style="color:var(--orn);font-weight:600" title="${esc(d.encoding_warning)}">⚠ ${d.encoding}</span>`:`<span>🔤 ${d.encoding}</span>`;
+    const meta=`<div class="prev-meta"><span>📏 ${d.lines} lines</span><span>📦 ${hs(d.size)}</span>${encBadge}<span>🏷 ${d.language}</span></div>`;
+    if(d.encoding_warning)toast(d.encoding_warning,'warn');
     document.getElementById('prevSaveBtn').style.display='inline-flex';
     // Try CodeMirror
     if(window._cmReady){
@@ -852,6 +854,26 @@ async function savePreview(){
     const ta=document.getElementById('prevEditor');
     if(!ta)return;
     content=ta.value;
+  }
+  // Code validation (warn but don't block)
+  const ext='.'+previewPath.split('.').pop().toLowerCase();
+  if(ext==='.json'){
+    try{JSON.parse(content)}catch(e){
+      const m=e.message.match(/position (\d+)/);
+      let info='JSON syntax error';
+      if(m){const pos=parseInt(m[1]);const before=content.substring(0,pos);const line=before.split('\n').length;const col=pos-before.lastIndexOf('\n');info+=` at line ${line}, column ${col}`}
+      else{info+=': '+e.message}
+      toast(info,'warn');
+    }
+  }
+  if(['.html','.htm'].includes(ext)){
+    const openTags=[...content.matchAll(/<([a-z][a-z0-9]*)[^>]*(?<!\/\s*)>/gi)].map(m=>m[1].toLowerCase());
+    const closeTags=[...content.matchAll(/<\/([a-z][a-z0-9]*)\s*>/gi)].map(m=>m[1].toLowerCase());
+    const selfClose=new Set(['br','hr','img','input','meta','link','area','base','col','embed','source','track','wbr']);
+    const stack=[];
+    openTags.forEach(t=>{if(!selfClose.has(t))stack.push(t)});
+    closeTags.forEach(t=>{const i=stack.lastIndexOf(t);if(i>=0)stack.splice(i,1)});
+    if(stack.length>0)toast(`HTML: unclosed tags: <${stack.slice(0,5).join('>, <')}>`,'warn');
   }
   try{
     await api('PUT','/api/files/content/'+encodeURIComponent(previewPath),{content});

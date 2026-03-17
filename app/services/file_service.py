@@ -388,7 +388,7 @@ async def copy_item(rel_path: str, dest_path: str = "") -> dict:
 
 # --- Text File Read/Edit ---
 def read_text_file(rel_path: str) -> dict:
-    """Read text file content with encoding detection."""
+    """Read text file content with chardet encoding detection."""
     fp = DOWNLOAD_DIR / rel_path
     if not fp.exists():
         return {"error": "File not found"}
@@ -401,19 +401,35 @@ def read_text_file(rel_path: str) -> dict:
     if ext not in TEXT_EXTS and not _is_likely_text(fp):
         return {"error": f"Not a text file: {ext}"}
 
-    # Try common encodings
+    # Detect encoding with chardet
+    raw = fp.read_bytes()
+    try:
+        import chardet
+        det = chardet.detect(raw)
+        detected_enc = det.get("encoding", "utf-8") or "utf-8"
+        confidence = det.get("confidence", 0)
+    except ImportError:
+        detected_enc = "utf-8"
+        confidence = 1.0
+
+    # Try detected encoding first, then fallbacks
     content = None
-    encoding = "utf-8"
-    for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252", "shift_jis"]:
+    encoding = detected_enc
+    for enc in [detected_enc, "utf-8", "utf-8-sig", "latin-1", "cp1252"]:
         try:
-            content = fp.read_text(encoding=enc)
+            content = raw.decode(enc)
             encoding = enc
             break
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, LookupError):
             continue
 
     if content is None:
         return {"error": "Cannot decode file"}
+
+    # Warn if non-UTF-8
+    encoding_warning = None
+    if encoding.lower() not in ("utf-8", "utf-8-sig", "ascii"):
+        encoding_warning = f"File is encoded as {encoding.upper()} (confidence: {confidence:.0%}). Consider converting to UTF-8."
 
     # Detect language for syntax highlighting
     lang_map = {
@@ -427,14 +443,18 @@ def read_text_file(rel_path: str) -> dict:
         ".toml": "toml", ".ini": "ini", ".conf": "nginx",
     }
 
-    return {
+    result = {
         "content": content,
-        "encoding": encoding,
+        "encoding": encoding.upper(),
         "size": sz,
         "language": lang_map.get(ext, "text"),
         "lines": content.count("\n") + 1,
-        "writable": True
+        "writable": True,
+        "confidence": round(confidence, 2)
     }
+    if encoding_warning:
+        result["encoding_warning"] = encoding_warning
+    return result
 
 
 async def save_text_file(rel_path: str, content: str) -> dict:
