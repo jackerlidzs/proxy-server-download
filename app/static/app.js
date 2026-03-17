@@ -387,31 +387,57 @@ async function delF(path){
 let _extPollId=null;
 async function extractF(path){
   const name=path.split('/').pop();
-  const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
   let extractPath=path;
   let isMultipart=false;
-  if(partMatch){
-    const group=partMatch[1];const partNum=parseInt(partMatch[2]);
-    const dir=path.substring(0,path.length-name.length);
-    extractPath=dir+group+'.part1.rar';
+
+  // Detect multipart: .partN.rar format
+  const partMatch=name.match(/^(.+?)\.part(\d+)\.rar$/i);
+  // Detect multipart: old RAR .r00, .r01
+  const oldRarMatch=name.match(/^(.+?)\.r(\d{2,})$/i);
+  // Detect split: .zip.001, .7z.001
+  const splitMatch=name.match(/^(.+?\.(zip|7z))\.(\d{3,})$/i);
+
+  if(partMatch||oldRarMatch||splitMatch){
     isMultipart=true;
     try{
       const check=await api('POST','/api/extract/check/'+encodeURIComponent(path));
-      if(check.is_multipart&&!check.complete){toast(`Missing parts: ${check.missing_files.join(', ')}`,'err');return}
+      if(check.is_multipart&&!check.complete){
+        const errMsg=check.error||`Missing parts: ${(check.missing_files||[]).join(', ')}`;
+        if(check.zero_byte_parts&&check.zero_byte_parts.length)toast(`Empty files: ${check.zero_byte_parts.join(', ')}`,'err');
+        toast(errMsg,'err');return;
+      }
     }catch(e){}
-    if(partNum!==1)toast('Using part1 for extraction...','info');
+    if(partMatch){
+      const dir=path.substring(0,path.length-name.length);
+      extractPath=dir+partMatch[1]+'.part1.rar';
+      if(parseInt(partMatch[2])!==1)toast('Using part1 for extraction...','info');
+    }
   }
+
   const archName=extractPath.split('/').pop();
   const msg=isMultipart
     ? `Extract "${archName}" and all related parts?\n\nChoose "OK" to delete archive files after extraction.\nChoose "Cancel" to keep them.`
     : `Extract "${archName}"?\n\nChoose "OK" to delete the archive after extraction.\nChoose "Cancel" to keep it.`;
   const del=await dlgConfirm('📦 Extract Archive', msg);
+  await _doExtract(extractPath, del, archName);
+}
+async function _doExtract(extractPath, del, archName, password){
   try{
-    const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),{delete_after:del});
+    const body={delete_after:del};
+    if(password)body.password=password;
+    const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),body);
     const dest=r.destination||'';
     toast(`Extracting → ${dest||archName}`,'ok');
     startExtractPoll();
-  }catch(e){toast(e.message,'err')}
+  }catch(e){
+    const errMsg=e.message||'';
+    // If password error, prompt for password
+    if(errMsg.toLowerCase().includes('password')){
+      const pw=await dlgPrompt('🔐 Password Required','Enter archive password:','');
+      if(pw)return _doExtract(extractPath, del, archName, pw);
+    }
+    toast(errMsg,'err');
+  }
 }
 function startExtractPoll(){
   if(_extPollId)return;

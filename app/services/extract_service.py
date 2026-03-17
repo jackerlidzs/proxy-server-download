@@ -14,6 +14,10 @@ from config import DOWNLOAD_DIR, MAX_CONCURRENT_EXTRACT
 
 extract_semaphore: asyncio.Semaphore = None
 RAR_PATTERN = re.compile(r'^(.+?)\.part(\d+)\.rar$', re.IGNORECASE)
+# Old RAR: name.rar, name.r00, name.r01, ...
+OLD_RAR_PATTERN = re.compile(r'^(.+?)\.r(\d{2,})$', re.IGNORECASE)
+# Split formats: name.zip.001, name.7z.001, etc.
+SPLIT_PATTERN = re.compile(r'^(.+?\.(zip|7z))\.(\d{3,})$', re.IGNORECASE)
 
 # Task tracker and subprocess refs for cancel
 extract_tasks: dict = {}
@@ -71,17 +75,44 @@ def _calc_eta(task):
 
 
 def check_parts(filename: str, directory: Path) -> dict:
-    """Check if all parts of a multi-part RAR are present."""
+    """Check if all parts of a multi-part archive are present.
+    Supports: .partN.rar, old RAR (.rar/.r00/.r01), split (.zip.001/.7z.001)
+    """
+    # --- New .partN.rar format ---
     group, part = part_group(filename)
-    if not group:
-        return {"is_multipart": False, "complete": True, "parts": [], "missing": []}
+    if group:
+        return _check_rar_parts(group, directory)
 
+    # --- Old RAR format: name.rar + name.r00 + name.r01 ---
+    fn_lower = filename.lower()
+    m_old = OLD_RAR_PATTERN.match(filename)
+    if m_old or fn_lower.endswith('.rar'):
+        if m_old:
+            base_name = m_old.group(1)
+        else:
+            base_name = filename[:-4]  # strip .rar
+        return _check_old_rar_parts(base_name, directory)
+
+    # --- Split zip/7z: name.zip.001, name.7z.001 ---
+    m_split = SPLIT_PATTERN.match(filename)
+    if m_split:
+        base_archive = m_split.group(1)  # e.g. file.zip
+        return _check_split_parts(base_archive, directory)
+
+    return {"is_multipart": False, "complete": True, "parts": [], "missing": []}
+
+
+def _check_rar_parts(group: str, directory: Path) -> dict:
+    """Check .partN.rar multipart."""
     existing = []
+    zero_byte_parts = []
     for f in directory.iterdir():
         if f.is_file():
             g, p = part_group(f.name)
             if g == group:
                 existing.append(p)
+                if f.stat().st_size == 0:
+                    zero_byte_parts.append(f.name)
 
     existing.sort()
     if not existing:
@@ -91,15 +122,123 @@ def check_parts(filename: str, directory: Path) -> dict:
     expected = list(range(1, max_part + 1))
     missing = [p for p in expected if p not in existing]
 
-    return {
+    result = {
         "is_multipart": True,
-        "complete": len(missing) == 0,
+        "complete": len(missing) == 0 and len(zero_byte_parts) == 0,
         "total_parts": max_part,
         "found_parts": sorted(existing),
         "missing_parts": missing,
         "group": group,
-        "missing_files": [f"{group}.part{p}.rar" for p in missing]
+        "missing_files": [f"{group}.part{p}.rar" for p in missing],
+        "format": "partN.rar"
     }
+    if zero_byte_parts:
+        result["complete"] = False
+        result["error"] = f"Empty (0 byte) parts: {', '.join(zero_byte_parts)}"
+        result["zero_byte_parts"] = zero_byte_parts
+    if 1 in missing:
+        result["error"] = f"Missing first part: {group}.part1.rar — cannot extract without part1"
+    return result
+
+
+def _check_old_rar_parts(base_name: str, directory: Path) -> dict:
+    """Check old RAR format: name.rar + name.r00 + name.r01 + ..."""
+    main_rar = None
+    volumes = []
+    zero_byte = []
+    for f in directory.iterdir():
+        if not f.is_file():
+            continue
+        fn = f.name
+        fn_lower = fn.lower()
+        base_lower = base_name.lower()
+        # Main file: base.rar
+        if fn_lower == base_lower + '.rar':
+            main_rar = fn
+            if f.stat().st_size == 0:
+                zero_byte.append(fn)
+        # Volumes: base.r00, base.r01, ...
+        m = OLD_RAR_PATTERN.match(fn)
+        if m and m.group(1).lower() == base_lower:
+            volumes.append((int(m.group(2)), fn))
+            if f.stat().st_size == 0:
+                zero_byte.append(fn)
+
+    if not volumes:
+        # Single .rar, not multipart
+        return {"is_multipart": False, "complete": True, "parts": [], "missing": []}
+
+    # Old format IS multipart
+    volumes.sort()
+    max_vol = max(v[0] for v in volumes)
+    existing_nums = {v[0] for v in volumes}
+    missing_vols = []
+    for i in range(0, max_vol + 1):
+        if i not in existing_nums:
+            missing_vols.append(f"{base_name}.r{i:02d}")
+
+    missing_files = list(missing_vols)
+    if not main_rar:
+        missing_files.insert(0, f"{base_name}.rar")
+
+    result = {
+        "is_multipart": True,
+        "complete": len(missing_files) == 0 and len(zero_byte) == 0,
+        "total_parts": max_vol + 2,  # volumes + main .rar
+        "found_parts": [0] + [v[0] + 1 for v in volumes] if main_rar else [v[0] + 1 for v in volumes],
+        "missing_parts": [],
+        "group": base_name,
+        "missing_files": missing_files,
+        "format": "old_rar",
+        "main_rar": main_rar
+    }
+    if zero_byte:
+        result["complete"] = False
+        result["error"] = f"Empty (0 byte) parts: {', '.join(zero_byte)}"
+    if not main_rar:
+        result["error"] = f"Missing main archive: {base_name}.rar"
+    return result
+
+
+def _check_split_parts(base_archive: str, directory: Path) -> dict:
+    """Check split format: name.zip.001, name.zip.002, ..."""
+    existing = []
+    zero_byte = []
+    base_lower = base_archive.lower()
+    for f in directory.iterdir():
+        if not f.is_file():
+            continue
+        m = SPLIT_PATTERN.match(f.name)
+        if m and m.group(1).lower() == base_lower:
+            num = int(m.group(3))
+            existing.append(num)
+            if f.stat().st_size == 0:
+                zero_byte.append(f.name)
+
+    if not existing:
+        return {"is_multipart": False, "complete": True, "parts": [], "missing": []}
+
+    existing.sort()
+    max_part = max(existing)
+    expected = list(range(1, max_part + 1))
+    missing = [p for p in expected if p not in existing]
+
+    result = {
+        "is_multipart": True,
+        "complete": len(missing) == 0 and len(zero_byte) == 0,
+        "total_parts": max_part,
+        "found_parts": sorted(existing),
+        "missing_parts": missing,
+        "group": base_archive,
+        "missing_files": [f"{base_archive}.{p:03d}" for p in missing],
+        "format": "split"
+    }
+    if zero_byte:
+        result["complete"] = False
+        result["error"] = f"Empty (0 byte) parts: {', '.join(zero_byte)}"
+    if 1 in missing:
+        result["error"] = f"Missing first part: {base_archive}.001 — cannot extract"
+    return result
 
 
 def cancel_extract(eid: str):
@@ -127,7 +266,8 @@ def _get_archive_size(fp: Path, group: str) -> int:
 
 
 async def extract_archive(filename: str, delete_after: bool = False,
-                           base_dir: Path = None, destination: str = None) -> dict:
+                           base_dir: Path = None, destination: str = None,
+                           password: str = None) -> dict:
     """Extract an archive file. Extracts to subfolder by default."""
     base_dir = base_dir or DOWNLOAD_DIR
     fp = base_dir / filename
@@ -139,26 +279,49 @@ async def extract_archive(filename: str, delete_after: bool = False,
     name_lower = fp.name.lower()
     eid = f"ext_{uuid.uuid4().hex[:8]}"
 
-    # For multi-part RAR, check all parts first
+    # Check multi-part for all formats
     group = ""
-    if ext == ".rar":
-        parts_info = check_parts(fp.name, fp.parent)
-        if parts_info["is_multipart"]:
-            if not parts_info["complete"]:
-                return {
-                    "success": False,
-                    "error": f"Missing parts: {', '.join(parts_info['missing_files'])}",
-                    "missing_files": parts_info["missing_files"],
-                    "found_parts": parts_info["found_parts"],
-                    "total_parts": parts_info.get("total_parts", 0)
-                }
-            group = parts_info.get("group", "")
+    archive_format = ""
+    parts_info = check_parts(fp.name, fp.parent)
+
+    if parts_info["is_multipart"]:
+        if not parts_info["complete"]:
+            err = parts_info.get("error", f"Missing parts: {', '.join(parts_info['missing_files'])}")
+            return {
+                "success": False,
+                "error": err,
+                "missing_files": parts_info.get("missing_files", []),
+                "found_parts": parts_info.get("found_parts", []),
+                "total_parts": parts_info.get("total_parts", 0),
+                "zero_byte_parts": parts_info.get("zero_byte_parts", [])
+            }
+        group = parts_info.get("group", "")
+        archive_format = parts_info.get("format", "")
+
+        # Redirect to correct first file
+        if archive_format == "partN.rar":
             g, p = part_group(fp.name)
             if g and p != 1:
                 part1 = fp.parent / f"{g}.part1.rar"
                 if part1.exists():
                     fp = part1
                     filename = str(part1.relative_to(base_dir))
+        elif archive_format == "old_rar":
+            # Use main .rar file for old format
+            main_rar = parts_info.get("main_rar")
+            if main_rar:
+                fp = fp.parent / main_rar
+                filename = str(fp.relative_to(base_dir))
+                ext = ".rar"
+                name_lower = fp.name.lower()
+        elif archive_format == "split":
+            # Use .001 first file
+            first_file = fp.parent / f"{group}.001"
+            if first_file.exists():
+                fp = first_file
+                filename = str(fp.relative_to(base_dir))
+                ext = fp.suffix.lower()
+                name_lower = fp.name.lower()
 
     # Determine output directory
     if destination:
@@ -169,6 +332,9 @@ async def extract_archive(filename: str, delete_after: bool = False,
             stem = stem[:-4]
         if group:
             stem = group
+            # Strip extension from split format groups (file.zip → file)
+            if archive_format == "split":
+                stem = Path(group).stem
         part_m = re.match(r'^(.+?)\.part\d+$', stem, re.IGNORECASE)
         if part_m:
             stem = part_m.group(1)
@@ -191,19 +357,30 @@ async def extract_archive(filename: str, delete_after: bool = False,
         "created_at": datetime.now().isoformat()
     }
 
-    asyncio.create_task(_run_extract(fp, ext, name_lower, out_dir, eid, group, delete_after))
+    asyncio.create_task(_run_extract(fp, ext, name_lower, out_dir, eid, group,
+                                      delete_after, password, archive_format))
 
     return {"success": True, "task_id": eid, "message": f"Extracting to {out_dir.name}/",
             "destination": str(out_dir.relative_to(base_dir))}
 
 
 async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
-                       eid: str, group: str, delete_after: bool):
+                       eid: str, group: str, delete_after: bool,
+                       password: str = None, archive_format: str = ""):
     """Background extraction task."""
     async with extract_semaphore:
         try:
-            if ext == ".rar" or name_lower.endswith(".rar"):
-                result = await _extract_rar(fp, base_dir, eid)
+            # Split archives (.zip.001, .7z.001) — use 7z to join+extract
+            if archive_format == "split":
+                group_lower = group.lower() if group else ""
+                if group_lower.endswith(".zip"):
+                    result = await _extract_split(fp, base_dir, eid, password, "zip")
+                elif group_lower.endswith(".7z"):
+                    result = await _extract_split(fp, base_dir, eid, password, "7z")
+                else:
+                    result = await _extract_split(fp, base_dir, eid, password, "auto")
+            elif ext == ".rar" or name_lower.endswith(".rar"):
+                result = await _extract_rar(fp, base_dir, eid, password)
             elif ext == ".zip":
                 result = await _extract_zip(fp, base_dir, eid)
             elif ext == ".7z":
@@ -229,12 +406,17 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
                 extract_tasks[eid].update({"status": "failed", "error": str(e)})
 
 
-async def _extract_rar(fp: Path, out_dir: Path, eid: str) -> bool:
+async def _extract_rar(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
     try:
         # Use stdbuf for line-buffered output (real-time progress)
+        cmd = ["stdbuf", "-oL", "unrar", "x", "-o+", "-y"]
+        if password:
+            cmd.append(f"-p{password}")
+        else:
+            cmd.append("-p-")  # assume no password
+        cmd.extend([str(fp), str(out_dir) + "/"])
         proc = await asyncio.create_subprocess_exec(
-            "stdbuf", "-oL", "unrar", "x", "-o+", "-y", str(fp), str(out_dir) + "/",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _extract_procs[eid] = proc
         stderr_lines = []
@@ -624,6 +806,81 @@ async def _extract_bz2(fp: Path, out_dir: Path, eid: str) -> bool:
     except FileNotFoundError:
         _extract_procs.pop(eid, None)
         extract_tasks[eid].update({"status": "failed", "error": "bunzip2 not found — install bzip2 on server"})
+        return False
+
+
+
+async def _extract_split(fp: Path, out_dir: Path, eid: str,
+                          password: str = None, fmt: str = "auto") -> bool:
+    """Extract split archives (.zip.001, .7z.001) using 7z."""
+    try:
+        cmd = ["7z", "x", "-y", f"-o{out_dir}"]
+        if password:
+            cmd.append(f"-p{password}")
+        cmd.append(str(fp))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _extract_procs[eid] = proc
+        stderr_lines = []
+
+        async def read_stderr():
+            async for line in proc.stderr:
+                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
+
+        stderr_task = asyncio.create_task(read_stderr())
+
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            dec = line.decode("utf-8", errors="ignore").strip()
+            if dec:
+                m = re.search(r'(\d+)%', dec)
+                if m:
+                    pct = float(m.group(1))
+                    extract_tasks[eid]["percent"] = pct
+                    _calc_eta(extract_tasks[eid])
+                    eta = extract_tasks[eid].get("eta", "")
+                    spd = extract_tasks[eid].get("speed", "")
+                    parts = [f"{pct:.0f}%"]
+                    if spd:
+                        parts.append(spd)
+                    if eta:
+                        parts.append(f"ETA {eta}")
+                    extract_tasks[eid]["progress"] = " · ".join(parts)
+            if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                proc.kill()
+                break
+        await proc.wait()
+        await stderr_task
+        _extract_procs.pop(eid, None)
+
+        if extract_tasks.get(eid, {}).get("status") == "cancelled":
+            return False
+
+        if proc.returncode == 0:
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
+                "speed": "", "eta": "",
+                "completed_at": datetime.now().isoformat()
+            })
+            return True
+        else:
+            err_msg = "Extraction failed"
+            for line in reversed(stderr_lines):
+                if line and "ERROR" in line.upper():
+                    err_msg = line[:200]
+                    break
+            if any("wrong password" in l.lower() or "password" in l.lower() for l in stderr_lines):
+                err_msg = "Wrong password or archive is password-protected"
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
+            return False
+    except FileNotFoundError:
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "7z (p7zip) not found — install p7zip-full on server"})
         return False
 
 

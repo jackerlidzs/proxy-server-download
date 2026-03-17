@@ -239,13 +239,15 @@ async def extract_file(filename: str, request: Request, _=Depends(verify_key)):
         raise HTTPException(404, "File not found")
 
     delete_after = False
+    password = None
     try:
         body = await request.json()
         delete_after = body.get("delete_after", False)
+        password = body.get("password", None)
     except Exception:
         pass
 
-    result = await extract_archive(filename, delete_after=delete_after)
+    result = await extract_archive(filename, delete_after=delete_after, password=password)
 
     if not result["success"]:
         if "missing_files" in result:
