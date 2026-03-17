@@ -345,8 +345,12 @@ async function fmBulkDel(){
   catch(e){toast(e.message,'err')}
 }
 async function fmBulkCompress(){
-  const name=await dlgPrompt('🗜️ Compress','Archive name (e.g. files.zip):','archive.zip');if(!name)return;
-  const fmt=name.endsWith('.tar.gz')||name.endsWith('.tgz')?'tar.gz':'zip';
+  const name=await dlgPrompt('🗜️ Compress','Archive name (e.g. files.zip, file.gz, file.bz2):','archive.zip');if(!name)return;
+  let fmt='zip';
+  if(name.endsWith('.tar.gz')||name.endsWith('.tgz'))fmt='tar.gz';
+  else if(name.endsWith('.tar.bz2')||name.endsWith('.tbz2'))fmt='tar.bz2';
+  else if(name.endsWith('.gz'))fmt='gzip';
+  else if(name.endsWith('.bz2'))fmt='bzip2';
   try{await api('POST','/api/compress',{filenames:[...fmSelected],archive_name:name,format:fmt});toast('Compression started','ok');rAll()}
   catch(e){toast(e.message,'err')}
 }

@@ -208,12 +208,14 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
                 result = await _extract_zip(fp, base_dir, eid)
             elif ext == ".7z":
                 result = await _extract_7z(fp, base_dir, eid)
-            elif name_lower.endswith((".tar.gz", ".tgz")):
+            elif name_lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2")):
                 result = await _extract_tar(fp, base_dir, eid)
             elif ext == ".tar":
                 result = await _extract_tar(fp, base_dir, eid)
-            elif ext == ".gz":
-                result = await _extract_tar(fp, base_dir, eid)
+            elif ext == ".gz" and not name_lower.endswith(".tar.gz"):
+                result = await _extract_gz(fp, base_dir, eid)
+            elif ext == ".bz2" and not name_lower.endswith(".tar.bz2"):
+                result = await _extract_bz2(fp, base_dir, eid)
             else:
                 extract_tasks[eid].update({"status": "failed", "error": f"Unsupported: {ext}"})
                 return
@@ -556,6 +558,75 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str) -> bool:
             return False
 
 
+async def _extract_gz(fp: Path, out_dir: Path, eid: str) -> bool:
+    """Extract a single .gz file using gunzip."""
+    try:
+        import shutil as shutil_mod
+        # Copy .gz to out_dir and decompress there
+        dest_gz = out_dir / fp.name
+        shutil_mod.copy2(str(fp), str(dest_gz))
+        cmd = ["gunzip", "-f", str(dest_gz)]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _extract_procs[eid] = proc
+        extract_tasks[eid].update({"percent": 50, "progress": "Decompressing..."})
+        _, stderr = await proc.communicate()
+        _extract_procs.pop(eid, None)
+
+        if proc.returncode == 0:
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · Done{' in ' + elapsed if elapsed else ''}",
+                "speed": "", "eta": "",
+                "completed_at": datetime.now().isoformat()
+            })
+            return True
+        else:
+            err_msg = stderr.decode("utf-8", errors="ignore").strip() if stderr else "Decompression failed"
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
+            return False
+    except FileNotFoundError:
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "gunzip not found — install gzip on server"})
+        return False
+
+
+async def _extract_bz2(fp: Path, out_dir: Path, eid: str) -> bool:
+    """Extract a single .bz2 file using bunzip2."""
+    try:
+        import shutil as shutil_mod
+        dest_bz = out_dir / fp.name
+        shutil_mod.copy2(str(fp), str(dest_bz))
+        cmd = ["bunzip2", "-f", str(dest_bz)]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _extract_procs[eid] = proc
+        extract_tasks[eid].update({"percent": 50, "progress": "Decompressing..."})
+        _, stderr = await proc.communicate()
+        _extract_procs.pop(eid, None)
+
+        if proc.returncode == 0:
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · Done{' in ' + elapsed if elapsed else ''}",
+                "speed": "", "eta": "",
+                "completed_at": datetime.now().isoformat()
+            })
+            return True
+        else:
+            err_msg = stderr.decode("utf-8", errors="ignore").strip() if stderr else "Decompression failed"
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
+            return False
+    except FileNotFoundError:
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "bunzip2 not found — install bzip2 on server"})
+        return False
+
+
 async def _extract_tar(fp: Path, out_dir: Path, eid: str) -> bool:
     try:
         # Use -v to track extracted files
@@ -649,6 +720,30 @@ async def compress_files(filenames: list[str], archive_name: str, fmt: str,
                 archive_name += ".tar.gz"
                 out_path = base_dir / archive_name
             cmd = ["tar", "-czf", str(out_path)] + [f"-C{base_dir}"] + filenames
+        elif fmt == "gzip":
+            # gzip single file — copies first then compresses
+            if len(files) != 1:
+                downloads_dict[cid].update({"status": "failed", "error": "Gzip only supports single file"})
+                return {"success": False, "error": "Gzip only supports single file", "task_id": cid}
+            import shutil as shutil_mod
+            gz_src = out_path.parent / Path(files[0]).name
+            if str(gz_src) != files[0]:
+                shutil_mod.copy2(files[0], str(gz_src))
+            cmd = ["gzip", "-f", str(gz_src)]
+        elif fmt == "bzip2":
+            if len(files) != 1:
+                downloads_dict[cid].update({"status": "failed", "error": "Bzip2 only supports single file"})
+                return {"success": False, "error": "Bzip2 only supports single file", "task_id": cid}
+            import shutil as shutil_mod
+            bz_src = out_path.parent / Path(files[0]).name
+            if str(bz_src) != files[0]:
+                shutil_mod.copy2(files[0], str(bz_src))
+            cmd = ["bzip2", "-f", str(bz_src)]
+        elif fmt in ("tar.bz2", "tbz2"):
+            if not archive_name.endswith((".tar.bz2", ".tbz2")):
+                archive_name += ".tar.bz2"
+                out_path = base_dir / archive_name
+            cmd = ["tar", "-cjf", str(out_path)] + [f"-C{base_dir}"] + filenames
         else:
             downloads_dict[cid].update({"status": "failed", "error": f"Unsupported format: {fmt}"})
             return {"success": False, "error": f"Unsupported format: {fmt}", "task_id": cid}
