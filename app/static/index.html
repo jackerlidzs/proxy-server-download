@@ -16,15 +16,15 @@
 <h2>🔐 Connect</h2>
 <div class="tabs"><button class="tab active" onclick="stab('apikey',this)">API Key</button><button class="tab" onclick="stab('jwtlogin',this)">Login</button></div>
 <div id="tab-apikey" class="tc active">
-<div class="fg"><label class="fl">API Key</label><input type="password" id="aKey" class="fi" placeholder="API key..." autofocus></div>
-<div class="fg"><label class="fl">Server URL</label><input type="text" id="aUrl" class="fi" placeholder="http://server:9090"><div class="fh">Leave empty for current URL</div></div>
-<button class="btn btn-p" onclick="auth()">Connect</button>
+<div class="fg"><label class="fl">API Key</label><input type="password" id="aKey" class="fi" placeholder="Enter your API key" autofocus></div>
+<div class="fg"><label class="fl">Server URL</label><input type="text" id="aUrl" class="fi"><div class="fh">Leave empty to use current URL</div></div>
+<button class="btn btn-p" onclick="auth()" style="width:100%;padding:10px;font-size:14px">🔐 Connect</button>
 </div>
 <div id="tab-jwtlogin" class="tc">
-<div class="fg"><label class="fl">Username</label><input type="text" id="jwtUser" class="fi" placeholder="username"></div>
-<div class="fg"><label class="fl">Password</label><input type="password" id="jwtPass" class="fi" placeholder="password"></div>
-<div class="fg"><label class="fl">Server URL</label><input type="text" id="jwtUrl" class="fi" placeholder="http://server:9090"><div class="fh">Leave empty for current URL</div></div>
-<button class="btn btn-p" onclick="jwtLogin()">Login</button>
+<div class="fg"><label class="fl">Username</label><input type="text" id="jwtUser" class="fi" placeholder="Enter username"></div>
+<div class="fg"><label class="fl">Password</label><input type="password" id="jwtPass" class="fi" placeholder="Enter password"></div>
+<div class="fg"><label class="fl">Server URL</label><input type="text" id="jwtUrl" class="fi"><div class="fh">Leave empty to use current URL</div></div>
+<button class="btn btn-p" onclick="jwtLogin()" style="width:100%;padding:10px;font-size:14px">🔐 Login</button>
 </div>
 </div></div>
 
@@ -123,9 +123,8 @@
 <header class="topbar">
 <div class="topbar-l"><div class="topbar-title" id="pageTitle">Downloads</div></div>
 <div class="topbar-r">
-<div id="userInfo" style="display:flex;align-items:center;gap:6px"></div>
+<div id="userInfo" style="display:flex;align-items:center;gap:8px"></div>
 <div class="tb-badge"><div class="tb-dot" id="sDot"></div><span id="sTxt">...</span></div>
-<button class="tb-btn" onclick="showAuth()">⚙</button>
 </div>
 </header>
 

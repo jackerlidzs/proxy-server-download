@@ -9,8 +9,13 @@ const VID_EXTS=['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.ts'];
 const AUD_EXTS=['.mp3','.flac','.aac','.wav','.ogg','.m4a'];
 
 document.addEventListener('DOMContentLoaded',()=>{
+  // Set default server URL placeholders
+  const defUrl=location.origin;
+  document.getElementById('aUrl').placeholder=defUrl;
+  document.getElementById('jwtUrl').placeholder=defUrl;
   if(!K)showAuth();else init();
   document.getElementById('aKey').addEventListener('keypress',e=>{if(e.key==='Enter')auth()});
+  document.getElementById('jwtPass').addEventListener('keypress',e=>{if(e.key==='Enter')jwtLogin()});
   // Drag-only upload zone (overlay)
   const body=document.body;
   let dragCount=0;
@@ -22,12 +27,19 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 function base(){return(U||location.origin).replace(/\/$/,'')}
 function showAuth(){document.getElementById('authM').style.display='flex';document.getElementById('aKey').focus()}
-function auth(){
-  K=document.getElementById('aKey').value.trim();
+async function auth(){
+  const key=document.getElementById('aKey').value.trim();
   U=document.getElementById('aUrl').value.trim();
-  if(!K){toast('Enter API key','err');return}
+  if(!key){toast('Enter API key','err');return}
+  // Validate key against server
+  const serverBase=(U||location.origin).replace(/\/$/,'');
+  try{
+    const r=await fetch(serverBase+'/health',{headers:{'Authorization':'Bearer '+key}});
+    if(!r.ok){toast('Invalid API key — check and try again','err');return}
+  }catch(e){toast('Cannot connect to server — check URL','err');return}
+  K=key;
   localStorage.setItem('dp_key',K);localStorage.setItem('dp_url',U);
-  currentUser='api_key';currentRole='admin';localStorage.setItem('dp_user','api_key');localStorage.setItem('dp_role','admin');
+  currentUser='Admin';currentRole='admin';localStorage.setItem('dp_user','Admin');localStorage.setItem('dp_role','admin');
   document.getElementById('authM').style.display='none';updateUserUI();init();
 }
 async function jwtLogin(){
@@ -57,7 +69,10 @@ function logout(){
 }
 function updateUserUI(){
   const el=document.getElementById('userInfo');
-  if(el&&currentUser)el.innerHTML=`<span style="font-size:11px;color:var(--txt2)">${esc(currentUser)} <span style="color:var(--grn);font-weight:600">${currentRole}</span></span> <button class="cp" onclick="logout()" style="font-size:10px" title="Logout">🚪</button>`;
+  if(el&&currentUser){
+    const badge=currentRole==='admin'?'<span style="background:var(--pri);color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">Admin</span>':'<span style="background:var(--bg3);color:var(--txt2);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">'+esc(currentRole)+'</span>';
+    el.innerHTML=`${badge} <button class="tb-btn" onclick="logout()" title="Logout" style="font-size:14px;padding:4px 8px">🚪</button>`;
+  }
 }
 function init(){health();rAll();rFiles();rMedia();startPoll();updateUserUI()}
 function startPoll(){if(poll)clearInterval(poll);poll=setInterval(()=>{rAll();health()},hasAct?1500:5000)}
