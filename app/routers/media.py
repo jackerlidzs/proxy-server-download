@@ -179,7 +179,7 @@ BROWSER_CONTAINERS = {".mp4", ".webm", ".mov", ".m4v"}
 
 @router.get("/api/media/probe/{filepath:path}")
 async def probe_compat(filepath: str, _=Depends(verify_key)):
-    """Check if video codec is browser-compatible."""
+    """Check if video codec is browser-compatible. Also returns duration."""
     import asyncio, json
     fp = DOWNLOAD_DIR / filepath
     if not fp.exists():
@@ -187,44 +187,54 @@ async def probe_compat(filepath: str, _=Depends(verify_key)):
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_streams", "-select_streams", "v:0", str(fp),
+            "-show_streams", "-show_format", "-select_streams", "v:0", str(fp),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
         info = json.loads(out.decode())
         streams = info.get("streams", [])
+        fmt = info.get("format", {})
+        duration = float(fmt.get("duration", 0))
         if not streams:
-            return {"needs_transcode": False, "codec": "unknown"}
+            return {"needs_transcode": False, "codec": "unknown", "duration": duration}
         codec = streams[0].get("codec_name", "").lower()
+        # Get duration from stream if format didn't have it
+        if not duration:
+            duration = float(streams[0].get("duration", 0))
         container_ok = fp.suffix.lower() in BROWSER_CONTAINERS
         codec_ok = codec in BROWSER_VIDEO_CODECS
         return {
             "needs_transcode": not (container_ok and codec_ok),
             "codec": codec,
             "container": fp.suffix.lower(),
-            "browser_compatible": container_ok and codec_ok
+            "browser_compatible": container_ok and codec_ok,
+            "duration": duration
         }
     except Exception as e:
-        return {"needs_transcode": False, "codec": "unknown", "error": str(e)}
+        return {"needs_transcode": False, "codec": "unknown", "error": str(e), "duration": 0}
 
 
 # --- On-the-fly transcoding stream (ffmpeg → H.264+AAC in fragmented MP4) ---
 @router.get("/stream-transcode/{filename:path}")
-async def stream_transcode(filename: str, request: Request):
-    """Transcode video on-the-fly to browser-compatible H.264+AAC."""
+async def stream_transcode(filename: str, request: Request, ss: float = 0):
+    """Transcode video on-the-fly to browser-compatible H.264+AAC.
+    Use ?ss=seconds to seek to a specific position."""
     import asyncio
     fp = DOWNLOAD_DIR / filename
     if not fp.exists():
         raise HTTPException(404)
 
-    # ffmpeg cmd: transcode to H.264 + AAC, output fragmented MP4 to stdout
-    cmd = [
-        "ffmpeg", "-i", str(fp),
+    # Build ffmpeg command with optional seek
+    cmd = ["ffmpeg"]
+    if ss > 0:
+        cmd += ["-ss", str(ss)]  # seek BEFORE input for fast seek
+    cmd += [
+        "-i", str(fp),
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "frag_keyframe+empty_moov+faststart",
         "-f", "mp4",
-        "-threads", "1",  # limit CPU on low-resource servers
+        "-threads", "1",
         "-y", "pipe:1"
     ]
 
@@ -237,7 +247,7 @@ async def stream_transcode(filename: str, request: Request):
     async def generate():
         try:
             while True:
-                chunk = await proc.stdout.read(262144)  # 256KB chunks
+                chunk = await proc.stdout.read(262144)
                 if not chunk:
                     break
                 yield chunk
