@@ -641,7 +641,7 @@ function renderM(items){
       else hlsBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();startHls('${esc(m.path)}')">📡 Create HLS</button>`;
     }
     let shareBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px;margin-left:4px" onclick="event.stopPropagation();shareFile('${esc(m.path)}')">🔗 Share</button>`;
-    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playM('${esc(m.filename)}','${m.stream_url}',${JSON.stringify(m.subtitles||[]).replace(/"/g,'&quot;')})"><div class="mc-top"><div class="mc-icon">${ic}</div>${badge}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
+    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playMediaFile('${esc(m.path)}')"><div class="mc-top"><div class="mc-icon">${ic}</div>${badge}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
   }).join('');
 }
 let hlsPlayer=null;
