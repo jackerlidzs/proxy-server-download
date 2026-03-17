@@ -1086,7 +1086,7 @@ const VP={
 window.addEventListener('beforeunload',()=>VP._savePosition());
 
 // === Play media file from File Manager ===
-function playMediaFile(path){
+async function playMediaFile(path){
   // Navigate to Media tab using the app's go() function
   const mediaBtn=document.querySelector('.sb-item[onclick*="media"]');
   if(mediaBtn)go('media',mediaBtn);
@@ -1099,9 +1099,29 @@ function playMediaFile(path){
     document.getElementById('pageTitle').textContent='Media';
     rMedia();
   }
-  // Build stream URL and play
+  // Build stream URL - probe codec for browser compatibility
   const filename=path.split('/').pop();
-  const streamUrl=base()+'/stream/'+encodeURIComponent(path);
+  const directUrl=base()+'/stream/'+encodeURIComponent(path);
+  // Check if video needs transcoding
+  const ext='.'+filename.split('.').pop().toLowerCase();
+  const browserNativeExts=['.mp4','.webm','.m4v'];
+  let streamUrl=directUrl;
+  if(VID_EXTS.includes(ext)&&!browserNativeExts.includes(ext)){
+    // MKV/AVI/FLV etc — likely needs transcoding, probe to confirm
+    try{
+      const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
+      if(probe.needs_transcode)streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
+    }catch(e){
+      // If probe fails, try transcode for non-native containers
+      streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
+    }
+  } else if(VID_EXTS.includes(ext)){
+    // MP4/WebM — probe to check codec (could be HEVC in MP4)
+    try{
+      const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
+      if(probe.needs_transcode)streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
+    }catch(e){}
+  }
   // Try to find subtitles from media API data
   api('GET','/api/media').then(d=>{
     const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);

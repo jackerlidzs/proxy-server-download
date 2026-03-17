@@ -171,3 +171,86 @@ async def stream(filename: str, request: Request):
         "Content-Type": ct,
         "Access-Control-Allow-Origin": "*"
     })
+
+
+# --- Probe codec for browser compatibility ---
+BROWSER_VIDEO_CODECS = {"h264", "vp8", "vp9", "av1"}
+BROWSER_CONTAINERS = {".mp4", ".webm", ".mov", ".m4v"}
+
+@router.get("/api/media/probe/{filepath:path}")
+async def probe_compat(filepath: str, _=Depends(verify_key)):
+    """Check if video codec is browser-compatible."""
+    import asyncio, json
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", "-select_streams", "v:0", str(fp),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        info = json.loads(out.decode())
+        streams = info.get("streams", [])
+        if not streams:
+            return {"needs_transcode": False, "codec": "unknown"}
+        codec = streams[0].get("codec_name", "").lower()
+        container_ok = fp.suffix.lower() in BROWSER_CONTAINERS
+        codec_ok = codec in BROWSER_VIDEO_CODECS
+        return {
+            "needs_transcode": not (container_ok and codec_ok),
+            "codec": codec,
+            "container": fp.suffix.lower(),
+            "browser_compatible": container_ok and codec_ok
+        }
+    except Exception as e:
+        return {"needs_transcode": False, "codec": "unknown", "error": str(e)}
+
+
+# --- On-the-fly transcoding stream (ffmpeg → H.264+AAC in fragmented MP4) ---
+@router.get("/stream-transcode/{filename:path}")
+async def stream_transcode(filename: str, request: Request):
+    """Transcode video on-the-fly to browser-compatible H.264+AAC."""
+    import asyncio
+    fp = DOWNLOAD_DIR / filename
+    if not fp.exists():
+        raise HTTPException(404)
+
+    # ffmpeg cmd: transcode to H.264 + AAC, output fragmented MP4 to stdout
+    cmd = [
+        "ffmpeg", "-i", str(fp),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "frag_keyframe+empty_moov+faststart",
+        "-f", "mp4",
+        "-threads", "1",  # limit CPU on low-resource servers
+        "-y", "pipe:1"
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    async def generate():
+        try:
+            while True:
+                chunk = await proc.stdout.read(262144)  # 256KB chunks
+                if not chunk:
+                    break
+                yield chunk
+        except Exception:
+            pass
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return StreamingResponse(generate(), media_type="video/mp4", headers={
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache",
+    })
+
