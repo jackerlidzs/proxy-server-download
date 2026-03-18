@@ -633,7 +633,7 @@ function renderM(items){
     const hlsS=m.hls?m.hls.status:'none';
     let hlsBtn='';
     if(isV){
-      if(hlsS==='ready')hlsBtn=`<button class="btn-g" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();playHls('${esc(m.filename)}','${m.hls.master_url}',${JSON.stringify(m.subtitles||[]).replace(/"/g,'&quot;')})">▶ HLS</button>`;
+      if(hlsS==='ready')hlsBtn=`<button class="btn-g" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();playHls('${esc(m.path)}','${esc(m.filename)}','${m.hls.master_url}')">▶ HLS</button>`;
       else if(hlsS==='transcoding')hlsBtn=`<div style="font-size:10px;color:var(--ylw);margin-top:4px"><span class="spin"></span> Transcoding ${m.hls.progress?.percent||0}%</div>`;
       else hlsBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();startHls('${esc(m.path)}')">📡 Create HLS</button>`;
     }
@@ -696,65 +696,24 @@ async function playMediaFile(path){
     return;
   }
 
-  // For video files — probe first for duration + remux status
-  try{
-    const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
-    const duration=probe.duration||0;
-    const remux=probe.remux||{};
-
-    let streamUrl;
-    let needsRemux=false;
-
-    // Check if remuxed version is already available
-    if(remux.status==='ready'&&remux.remux_url){
-      streamUrl=remux.remux_url;
-    }else if(probe.browser_compatible&&!probe.needs_remux){
-      streamUrl=base()+'/stream/'+encodeURIComponent(path);
-    }else if(probe.needs_transcode){
-      streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
-      needsRemux=true;
-    }else if(probe.needs_remux){
-      streamUrl=base()+'/stream/'+encodeURIComponent(path);
-      needsRemux=true;
-    }else{
-      streamUrl=base()+'/stream/'+encodeURIComponent(path);
-    }
-
-    // Trigger background remux if needed
-    if(needsRemux&&remux.status!=='ready'){
-      if(remux.status==='not_started'){
-        try{
-          await api('POST','/api/media/remux/'+encodeURIComponent(path));
-        }catch(e){console.warn('Remux trigger failed:',e)}
-      }
-    }
-
-    // Get subtitles and play
-    api('GET','/api/media').then(d=>{
-      const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
-      playM(filename,streamUrl,m&&m.subtitles?m.subtitles:[]);
-    }).catch(()=>playM(filename,streamUrl,[]));
-
-  }catch(e){
-    console.warn('Probe failed, using fallback:',e);
-    const directUrl=base()+'/stream/'+encodeURIComponent(path);
-    api('GET','/api/media').then(d=>{
-      const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
-      playM(filename,directUrl,m&&m.subtitles?m.subtitles:[]);
-    }).catch(()=>playM(filename,directUrl,[]));
+  // For video files — delegate to PlayerModule with file path
+  // PlayerModule handles HLS status check, conversion, and loading
+  if(isVideo&&window.PlayerModule){
+    window.PlayerModule.open(path,filename);
+    return;
   }
 }
 function playM(name,url,subs){
-  // Phase 2: delegate to PlayerModule
-  if(window.PlayerModule)window.PlayerModule.open(url,name);
+  // Audio playback — TODO: implement audio player
+  console.log('playM audio:',name,url);
 }
 function loadHlsLib(){
   // HLS.js is now loaded via <script> tag
   return Promise.resolve();
 }
-async function playHls(name,masterUrl,subs){
-  // Phase 2: delegate to PlayerModule
-  if(window.PlayerModule)window.PlayerModule.open(masterUrl,name);
+async function playHls(path,name,masterUrl){
+  // Delegate to PlayerModule with file path (not URL)
+  if(window.PlayerModule)window.PlayerModule.open(path,name);
 }
 async function startHls(path){
   try{const r=await api('POST','/api/media/hls/'+encodeURIComponent(path));toast('HLS transcoding '+r.status,'ok');setTimeout(()=>rMedia(),2000)}
