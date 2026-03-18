@@ -29,36 +29,22 @@
       // Check HLS status
       var statusData = await fetchHlsStatus(filePath);
 
-      if (statusData.status === 'not_started') {
-        // Trigger convert
-        showStatusOverlay('⏳ Đang chuẩn bị video...');
-        await triggerHlsConvert(filePath);
-        await waitUntilReady(filePath);
-        hideStatusOverlay();
+      if (statusData.status === 'ready') {
+        // HLS đã sẵn sàng → dùng luôn (seek instant, nhẹ server)
+        loadPlayer(filePath, statusData.master_url);
 
-      } else if (statusData.status === 'transcoding') {
-        var pct = statusData.progress && statusData.progress.percent
-                  ? statusData.progress.percent + '%'
-                  : '';
-        showStatusOverlay('⏳ Đang xử lý video... ' + pct);
-        await waitUntilReady(filePath);
-        hideStatusOverlay();
-
-      } else if (statusData.status === 'ready') {
-        // Load ngay
       } else {
-        showStatusOverlay('❌ Không thể phát video này');
-        return;
-      }
+        // HLS chưa có → play NGAY qua stream-transcode
+        // Không block, không chờ
+        var streamUrl = '/stream-transcode/' + encodeFilePath(filePath);
+        loadPlayerDirect(filePath, streamUrl);
 
-      // Lấy lại status để có master_url
-      var ready = await fetchHlsStatus(filePath);
-      if (!ready.master_url) {
-        showStatusOverlay('❌ Không tìm thấy HLS stream');
-        return;
+        // Trigger HLS convert ngầm (fire and forget)
+        if (statusData.status === 'not_started') {
+          triggerHlsConvert(filePath);
+        }
+        // Không cần waitUntilReady — lần sau mở lại sẽ dùng HLS
       }
-
-      loadPlayer(filePath, ready.master_url);
     },
 
     close: function() {
@@ -105,6 +91,40 @@
           // hls.js handle quality switching tự động
         }
       },
+      keyboard: { focused: true, global: true },
+      tooltips: { controls: true, seek: true },
+      hideControls: true,
+      clickToPlay: true,
+      rewind: 10,
+      fastForward: 10,
+    });
+
+    window._player = plyrInstance;
+
+    plyrInstance.on('ready', function() {
+      initResumeProgress(currentPath);
+      initPiP();
+      initTouchGestures();
+    });
+
+    initProgressSaving(currentPath);
+  }
+
+  function loadPlayerDirect(filePath, streamUrl) {
+    var videoEl = document.getElementById('player');
+    if (!videoEl) return;
+
+    // Dùng src trực tiếp, không qua HLS.js
+    videoEl.src = streamUrl;
+
+    plyrInstance = new Plyr('#player', {
+      controls: [
+        'play-large', 'play', 'rewind', 'fast-forward',
+        'progress', 'current-time', 'duration',
+        'mute', 'volume', 'settings', 'fullscreen'
+      ],
+      settings: ['speed'],
+      speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
       keyboard: { focused: true, global: true },
       tooltips: { controls: true, seek: true },
       hideControls: true,
