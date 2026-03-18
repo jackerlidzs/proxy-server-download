@@ -669,6 +669,8 @@ window.addEventListener('beforeunload',()=>VP._savePosition());
 
 // === Play media file from File Manager ===
 async function playMediaFile(path){
+  if(!path){console.error('playMediaFile: path is undefined');return}
+
   // Navigate to Media tab
   const mediaBtn=document.querySelector('.sb-item[onclick*="media"]');
   if(mediaBtn)go('media',mediaBtn);
@@ -696,10 +698,17 @@ async function playMediaFile(path){
     return;
   }
 
-  // For video files — delegate to PlayerModule with file path
-  // PlayerModule handles HLS status check, conversion, and loading
+  // For video files — probe codec, build correct stream URL, then open
   if(isVideo&&window.PlayerModule){
-    window.PlayerModule.open(path,filename);
+    let streamUrl='/stream-transcode/'+encodeURIComponent(path);
+    try{
+      const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
+      if(probe.browser_compatible){
+        // H.264+AAC in MP4/WebM → stream trực tiếp, không cần transcode
+        streamUrl=base()+'/stream/'+encodeURIComponent(path);
+      }
+    }catch(e){console.warn('Probe failed, using transcode:',e)}
+    window.PlayerModule.open(path,filename,streamUrl);
     return;
   }
 }
@@ -712,7 +721,7 @@ function loadHlsLib(){
   return Promise.resolve();
 }
 async function playHls(path,name,masterUrl){
-  // Delegate to PlayerModule with file path (not URL)
+  // Delegate to PlayerModule — path is relative, no streamUrl needed (HLS is ready)
   if(window.PlayerModule)window.PlayerModule.open(path,name);
 }
 async function startHls(path){

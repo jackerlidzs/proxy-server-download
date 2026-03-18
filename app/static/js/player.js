@@ -11,7 +11,7 @@
 
   window.PlayerModule = {
 
-    open: async function(filePath, fileName) {
+    open: async function(filePath, fileName, fallbackStreamUrl) {
       currentPath = filePath;
       destroyPlayer();
 
@@ -34,10 +34,10 @@
         loadPlayer(filePath, statusData.master_url);
 
       } else {
-        // HLS chưa có → play NGAY qua stream-transcode
-        // Không block, không chờ
-        var streamUrl = '/stream-transcode/' + encodeFilePath(filePath);
-        loadPlayerDirect(filePath, streamUrl);
+        // HLS chưa có → play NGAY qua URL đã được probe
+        // fallbackStreamUrl = /stream/ (nếu codec tương thích) hoặc /stream-transcode/
+        var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
+        loadPlayerDirect(filePath, directUrl);
 
         // Trigger HLS convert ngầm (fire and forget)
         if (statusData.status === 'not_started') {
