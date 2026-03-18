@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Upload Progress Panel - UI Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a25;--bg4:#22222f;
+  --glass:rgba(20,20,35,0.6);--glass2:rgba(30,30,50,0.4);
+  --bdr:rgba(255,255,255,0.06);--bdr2:rgba(255,255,255,0.1);
+  --txt:#f0f0f5;--txt2:#8888a0;--txt3:#55556a;
+  --pri:#7c5cfc;--pri2:#9b7fff;--pri3:rgba(124,92,252,0.12);
+  --grn:#34d399;--grn3:rgba(52,211,153,0.1);
+  --ylw:#fbbf24;--ylw3:rgba(251,191,36,0.1);
+  --red:#f87171;--red3:rgba(248,113,113,0.1);
+  --cyn:#22d3ee;--cyn3:rgba(34,211,238,0.1);
+  --orn:#fb923c;--orn3:rgba(251,146,60,0.1);
+  --r:12px;--rs:8px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  background:var(--bg);color:var(--txt);
+  min-height:100vh;-webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;
+  background:radial-gradient(ellipse at 30% 20%,rgba(124,92,252,0.04) 0%,transparent 50%),
+             radial-gradient(ellipse at 70% 80%,rgba(34,211,238,0.03) 0%,transparent 50%);
+  pointer-events:none;z-index:0;
+}
+
+/* Demo background content */
+.demo-bg{
+  position:relative;z-index:1;padding:40px;
+  display:flex;flex-direction:column;align-items:center;gap:20px;
+}
+.demo-title{
+  font-size:24px;font-weight:700;
+  background:linear-gradient(135deg,var(--pri2),var(--cyn));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  margin-bottom:8px;
+}
+.demo-desc{font-size:13px;color:var(--txt3);text-align:center;max-width:500px;line-height:1.6}
+.demo-controls{
+  display:flex;gap:10px;margin-top:20px;
+}
+.demo-btn{
+  padding:10px 20px;border:none;border-radius:var(--rs);font-size:13px;font-weight:600;
+  cursor:pointer;font-family:'Inter',sans-serif;transition:.2s;
+}
+.demo-btn-p{
+  background:linear-gradient(135deg,var(--pri),#6a4ff0);color:#fff;
+  box-shadow:0 4px 20px rgba(124,92,252,0.25);
+}
+.demo-btn-p:hover{box-shadow:0 4px 30px rgba(124,92,252,0.4);transform:translateY(-1px)}
+.demo-btn-s{
+  background:var(--glass);color:var(--txt2);border:1px solid var(--bdr);
+}
+.demo-btn-s:hover{border-color:var(--bdr2);color:var(--txt)}
+
+/* ===== Upload Progress Panel ===== */
+.upl-panel{
+  position:fixed;bottom:20px;right:20px;
+  width:400px;max-height:70vh;
+  background:rgba(18,18,26,0.95);
+  backdrop-filter:blur(20px);
+  border:1px solid var(--bdr2);
+  border-radius:var(--r);
+  box-shadow:0 20px 60px rgba(0,0,0,.5),0 0 0 1px rgba(124,92,252,0.05);
+  z-index:100;
+  display:flex;flex-direction:column;
+  animation:uplSlideIn .3s ease;
+  overflow:hidden;
+}
+@keyframes uplSlideIn{
+  from{transform:translateY(20px);opacity:0}
+  to{transform:translateY(0);opacity:1}
+}
+
+/* Header */
+.upl-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;
+  border-bottom:1px solid var(--bdr);
+  background:rgba(10,10,15,0.5);
+  flex-shrink:0;
+}
+.upl-title{
+  font-size:13px;font-weight:600;
+  display:flex;align-items:center;gap:6px;
+}
+.upl-title-count{
+  font-size:11px;color:var(--txt3);font-weight:500;
+}
+.upl-hdr-acts{display:flex;gap:2px}
+.upl-hdr-btn{
+  width:26px;height:26px;border:none;
+  background:transparent;color:var(--txt3);
+  cursor:pointer;border-radius:4px;font-size:12px;
+  display:flex;align-items:center;justify-content:center;
+  transition:.15s;font-family:'Inter',sans-serif;
+}
+.upl-hdr-btn:hover{background:rgba(255,255,255,0.06);color:var(--txt)}
+
+/* Overall progress */
+.upl-overall{
+  padding:10px 14px;
+  border-bottom:1px solid var(--bdr);
+  background:rgba(10,10,15,0.3);
+}
+.upl-overall-info{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:6px;
+}
+.upl-overall-left{font-size:11px;color:var(--txt2);font-weight:500}
+.upl-overall-right{font-size:11px;color:var(--cyn);font-weight:600}
+.upl-overall-bar{
+  width:100%;height:3px;background:var(--bg4);border-radius:2px;overflow:hidden;
+}
+.upl-overall-fill{
+  height:100%;border-radius:2px;transition:width .4s ease;
+  background:linear-gradient(90deg,var(--pri),var(--cyn));
+  position:relative;
+}
+
+/* File list */
+.upl-list{
+  overflow-y:auto;max-height:calc(70vh - 100px);
+  padding:4px 0;
+}
+
+/* Per-file item */
+.upl-item{
+  padding:10px 14px;
+  border-bottom:1px solid rgba(255,255,255,0.03);
+  transition:background .15s;
+}
+.upl-item:hover{background:rgba(255,255,255,0.02)}
+.upl-item:last-child{border-bottom:none}
+
+.upl-item-top{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:8px;
+  margin-bottom:6px;
+}
+.upl-item-info{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+
+/* File type badge */
+.upl-ext{
+  flex-shrink:0;
+  font-size:9px;font-weight:700;text-transform:uppercase;
+  padding:3px 6px;border-radius:4px;letter-spacing:.3px;
+  min-width:32px;text-align:center;
+}
+.upl-ext-pdf{background:var(--red3);color:var(--red)}
+.upl-ext-png{background:var(--pri3);color:var(--pri2)}
+.upl-ext-jpg{background:var(--orn3);color:var(--orn)}
+.upl-ext-xls{background:var(--grn3);color:var(--grn)}
+.upl-ext-zip{background:var(--ylw3);color:var(--ylw)}
+.upl-ext-default{background:var(--glass2);color:var(--txt3)}
+
+.upl-item-name{
+  font-size:12px;font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  flex:1;
+}
+
+/* Action buttons */
+.upl-item-acts{display:flex;gap:4px;flex-shrink:0}
+.upl-act{
+  width:24px;height:24px;border:none;
+  border-radius:4px;cursor:pointer;font-size:11px;
+  display:flex;align-items:center;justify-content:center;
+  transition:.15s;font-family:'Inter',sans-serif;
+}
+.upl-act-cancel{background:var(--red3);color:var(--red)}
+.upl-act-cancel:hover{background:rgba(248,113,113,.2)}
+.upl-act-retry{background:var(--ylw3);color:var(--ylw)}
+.upl-act-retry:hover{background:rgba(251,191,36,.2)}
+.upl-act-done{background:var(--grn3);color:var(--grn)}
+
+/* Progress bar */
+.upl-prog{
+  width:100%;height:3px;background:var(--bg4);border-radius:2px;
+  overflow:hidden;margin-bottom:4px;
+}
+.upl-prog-fill{
+  height:100%;border-radius:2px;transition:width .3s ease;
+}
+.upl-prog-fill.uploading{
+  background:linear-gradient(90deg,var(--pri),#6a4ff0);
+  position:relative;
+}
+.upl-prog-fill.uploading::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);
+  animation:shimmer 1.5s infinite;
+}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.upl-prog-fill.done{background:var(--grn)}
+.upl-prog-fill.error{background:var(--red)}
+.upl-prog-fill.pending{background:var(--bg4)}
+
+/* Meta info line */
+.upl-meta{
+  display:flex;align-items:center;gap:8px;
+  font-size:10px;color:var(--txt3);
+  flex-wrap:wrap;
+}
+.upl-speed{color:var(--cyn);font-weight:600}
+.upl-eta{color:var(--txt2)}
+.upl-bytes{color:var(--txt3)}
+
+/* Status badges */
+.upl-st{
+  display:inline-flex;padding:2px 6px;border-radius:6px;
+  font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;
+}
+.upl-st-pending{background:var(--pri3);color:var(--pri2)}
+.upl-st-uploading{background:var(--ylw3);color:var(--ylw)}
+.upl-st-done{background:var(--grn3);color:var(--grn)}
+.upl-st-error{background:var(--red3);color:var(--red)}
+
+/* Error message */
+.upl-error-msg{
+  font-size:10px;color:var(--red);
+  margin-top:4px;word-break:break-all;
+}
+
+/* Minimize state */
+.upl-panel.minimized .upl-body{display:none}
+.upl-panel.minimized{border-radius:var(--r)}
+
+/* Responsive */
+@media(max-width:480px){
+  .upl-panel{width:calc(100% - 16px);right:8px;bottom:8px}
+}
+</style>
+</head>
+<body>
+
+<!-- Demo background -->
+<div class="demo-bg">
+  <div class="demo-title">📤 Upload Progress Panel — UI Mockup</div>
+  <div class="demo-desc">
+    Đây là preview của Upload Progress Panel. Panel hiển thị ở góc dưới-phải.<br>
+    Bấm các nút bên dưới để xem các trạng thái khác nhau.
+  </div>
+  <div class="demo-controls">
+    <button class="demo-btn demo-btn-p" onclick="showDemo('normal')">🔄 Đang Upload</button>
+    <button class="demo-btn demo-btn-s" onclick="showDemo('allDone')">✅ Tất cả hoàn tất</button>
+    <button class="demo-btn demo-btn-s" onclick="showDemo('withError')">❌ Có lỗi</button>
+    <button class="demo-btn demo-btn-s" onclick="toggleMin()">▼ Minimize</button>
+  </div>
+</div>
+
+<!-- ===== Upload Progress Panel ===== -->
+<div id="uploadPanel" class="upl-panel">
+  <!-- Header -->
+  <div class="upl-header">
+    <span class="upl-title">
+      📤 Upload
+      <span class="upl-title-count" id="uplTitleCount">· 1/3 files</span>
+    </span>
+    <div class="upl-hdr-acts">
+      <button class="upl-hdr-btn" onclick="toggleMin()" title="Minimize" id="minBtn">▼</button>
+      <button class="upl-hdr-btn" onclick="document.getElementById('uploadPanel').style.display='none'" title="Close">✕</button>
+    </div>
+  </div>
+
+  <!-- Body (hideable on minimize) -->
+  <div class="upl-body" id="uplBody">
+    <!-- Overall progress -->
+    <div class="upl-overall" id="uplOverall"></div>
+    <!-- File list -->
+    <div class="upl-list" id="uplList"></div>
+  </div>
+</div>
+
+<script>
+// Demo data
+const demos = {
+  normal: {
+    overall: { done: 1, total: 3, percent: 38, speed: '2.4 MB/s' },
+    files: [
+      {
+        name: 'data_export.xlsx', ext: 'xls', status: 'done',
+        percent: 100, sizeHuman: '1.2 MB', speed: '', eta: '', loaded: '', total: ''
+      },
+      {
+        name: 'report_Q3_2024.pdf', ext: 'pdf', status: 'uploading',
+        percent: 60, sizeHuman: '8 MB', speed: '2.4 MB/s', eta: 'ETA 3s',
+        loaded: '4.8 MB', total: '8 MB'
+      },
+      {
+        name: 'banner_hero.png', ext: 'png', status: 'pending',
+        percent: 0, sizeHuman: '3.2 MB', speed: '', eta: '', loaded: '', total: ''
+      }
+    ]
+  },
+  allDone: {
+    overall: { done: 3, total: 3, percent: 100, speed: '' },
+    files: [
+      {
+        name: 'data_export.xlsx', ext: 'xls', status: 'done',
+        percent: 100, sizeHuman: '1.2 MB'
+      },
+      {
+        name: 'report_Q3_2024.pdf', ext: 'pdf', status: 'done',
+        percent: 100, sizeHuman: '8 MB'
+      },
+      {
+        name: 'banner_hero.png', ext: 'png', status: 'done',
+        percent: 100, sizeHuman: '3.2 MB'
+      }
+    ]
+  },
+  withError: {
+    overall: { done: 1, total: 3, percent: 45, speed: '' },
+    files: [
+      {
+        name: 'data_export.xlsx', ext: 'xls', status: 'done',
+        percent: 100, sizeHuman: '1.2 MB'
+      },
+      {
+        name: 'report_Q3_2024.pdf', ext: 'pdf', status: 'error',
+        percent: 35, sizeHuman: '8 MB', error: 'Network error — connection reset'
+      },
+      {
+        name: 'banner_hero.png', ext: 'png', status: 'pending',
+        percent: 0, sizeHuman: '3.2 MB'
+      }
+    ]
+  }
+};
+
+function renderOverall(data) {
+  const o = data.overall;
+  const isDone = o.done === o.total;
+  return `
+    <div class="upl-overall-info">
+      <span class="upl-overall-left">${isDone ? '✅ Tất cả hoàn tất' : `${o.done}/${o.total} files · ${o.percent}%`}</span>
+      ${o.speed ? `<span class="upl-overall-right">${o.speed}</span>` : ''}
+    </div>
+    <div class="upl-overall-bar">
+      <div class="upl-overall-fill" style="width:${o.percent}%"></div>
+    </div>
+  `;
+}
+
+function renderFile(f) {
+  // Extension badge
+  const extClass = {pdf:'upl-ext-pdf',png:'upl-ext-png',jpg:'upl-ext-jpg',xls:'upl-ext-xls',zip:'upl-ext-zip'}[f.ext] || 'upl-ext-default';
+  
+  // Status badge
+  const stClass = {pending:'upl-st-pending',uploading:'upl-st-uploading',done:'upl-st-done',error:'upl-st-error'}[f.status];
+  const stLabel = {pending:'Pending',uploading:'Uploading',done:'Done',error:'Error'}[f.status];
+  
+  // Progress bar class
+  const progClass = f.status;
+  
+  // Action button
+  let actHtml = '';
+  if (f.status === 'uploading') actHtml = '<button class="upl-act upl-act-cancel" title="Cancel">✕</button>';
+  else if (f.status === 'error') actHtml = '<button class="upl-act upl-act-retry" title="Retry">↻</button>';
+  else if (f.status === 'done') actHtml = '<span class="upl-act upl-act-done">✓</span>';
+  
+  // Meta line
+  let metaHtml = '';
+  if (f.status === 'uploading') {
+    metaHtml = `
+      <span class="upl-speed">${f.speed}</span>
+      <span class="upl-eta">${f.eta}</span>
+      <span class="upl-bytes">${f.loaded} / ${f.total}</span>
+    `;
+  } else if (f.status === 'done') {
+    metaHtml = `<span style="color:var(--grn)">Hoàn tất · ${f.sizeHuman}</span>`;
+  } else if (f.status === 'pending') {
+    metaHtml = `<span class="upl-st upl-st-pending">Đang chờ...</span><span>${f.sizeHuman}</span>`;
+  } else if (f.status === 'error') {
+    metaHtml = `<span class="upl-st upl-st-error">Lỗi</span>`;
+  }
+  
+  // Error message
+  const errHtml = f.error ? `<div class="upl-error-msg">❌ ${f.error}</div>` : '';
+  
+  return `
+    <div class="upl-item">
+      <div class="upl-item-top">
+        <div class="upl-item-info">
+          <span class="upl-ext ${extClass}">${f.ext.toUpperCase()}</span>
+          <span class="upl-item-name" title="${f.name}">${f.name}</span>
+        </div>
+        <div class="upl-item-acts">${actHtml}</div>
+      </div>
+      <div class="upl-prog">
+        <div class="upl-prog-fill ${progClass}" style="width:${f.percent}%"></div>
+      </div>
+      <div class="upl-meta">${metaHtml}</div>
+      ${errHtml}
+    </div>
+  `;
+}
+
+function showDemo(key) {
+  const data = demos[key];
+  const panel = document.getElementById('uploadPanel');
+  panel.style.display = 'flex';
+  panel.classList.remove('minimized');
+  document.getElementById('minBtn').textContent = '▼';
+  
+  // Update title count
+  const o = data.overall;
+  document.getElementById('uplTitleCount').textContent = 
+    o.done === o.total ? '· ✅ Done' : `· ${o.done}/${o.total} files`;
+  
+  // Render overall
+  document.getElementById('uplOverall').innerHTML = renderOverall(data);
+  
+  // Render files
+  document.getElementById('uplList').innerHTML = data.files.map(renderFile).join('');
+  
+  // Animate uploading progress bar
+  if (key === 'normal') animateProgress();
+}
+
+function toggleMin() {
+  const panel = document.getElementById('uploadPanel');
+  const btn = document.getElementById('minBtn');
+  panel.classList.toggle('minimized');
+  btn.textContent = panel.classList.contains('minimized') ? '▲' : '▼';
+}
+
+// Animate the progress bar for demo effect
+let animInterval;
+function animateProgress() {
+  if (animInterval) clearInterval(animInterval);
+  let pct = 60;
+  const bar = document.querySelector('.upl-prog-fill.uploading');
+  const overall = document.querySelector('.upl-overall-fill');
+  if (!bar) return;
+  
+  animInterval = setInterval(() => {
+    pct += Math.random() * 2;
+    if (pct > 95) pct = 60; // loop
+    bar.style.width = pct + '%';
+    // Update meta
+    const speed = (1.5 + Math.random() * 2).toFixed(1);
+    const loaded = (pct / 100 * 8).toFixed(1);
+    const remain = 8 - loaded;
+    const eta = Math.ceil(remain / speed);
+    const metaEl = bar.closest('.upl-item').querySelector('.upl-meta');
+    if (metaEl) {
+      metaEl.innerHTML = `
+        <span class="upl-speed">${speed} MB/s</span>
+        <span class="upl-eta">ETA ${eta}s</span>
+        <span class="upl-bytes">${loaded} MB / 8 MB</span>
+      `;
+    }
+    // Overall ~38% base + uploading contribution
+    if (overall) {
+      const oPct = Math.round((1 + pct/100) / 3 * 100);
+      overall.style.width = oPct + '%';
+    }
+  }, 500);
+}
+
+// Show default demo on load
+showDemo('normal');
+</script>
+</body>
+</html>

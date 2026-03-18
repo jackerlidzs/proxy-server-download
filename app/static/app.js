@@ -115,6 +115,8 @@ function go(page,el){
   document.getElementById('p-'+page).classList.add('active');
   const titles={dl:'Downloads',fm:'File Manager',media:'Media',trash:'Recycle Bin',dedup:'Deduplication',share:'Share Links'};
   document.getElementById('pageTitle').textContent=titles[page]||'';
+  // Close player when navigating away from media
+  if(page!=='media'&&window.PlayerModule)window.PlayerModule.close();
   if(page==='fm')rFiles();
   if(page==='media')rMedia();
   if(page==='trash')rTrash();
@@ -636,545 +638,34 @@ function renderM(items){
       else hlsBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();startHls('${esc(m.path)}')">📡 Create HLS</button>`;
     }
     let shareBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px;margin-left:4px" onclick="event.stopPropagation();shareFile('${esc(m.path)}')">🔗 Share</button>`;
-    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playMediaFile('${esc(m.path)}')"><div class="mc-top"><div class="mc-icon">${ic}</div>${badge}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
+    // Phase 5: Progress bar + watch badge
+    const saved=getProgress(m.path);
+    const pct=saved?Math.round(saved.percentage):0;
+    let progressH='';
+    progressH+=`<div class="card-progress-bar"><div class="card-progress-fill" style="width:${pct}%"></div></div>`;
+    if(pct>5&&pct<95) progressH+=`<span class="watch-badge watching">Đang xem</span>`;
+    else if(pct>=95) progressH+=`<span class="watch-badge watched">Đã xem</span>`;
+    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playMediaFile('${esc(m.path)}')"><div class="mc-top" style="position:relative"><div class="mc-icon">${ic}</div>${badge}${progressH}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
   }).join('');
 }
 let hlsPlayer=null;
 
-// === Custom Video Player Controller ===
+/* === PHASE1_REMOVED_START === Custom Video Player Controller ===
+ * Entire VP controller commented out for Plyr migration.
+ * See MIGRATION_MAP.md for full list of functions removed.
+ * Original lines: 645-1174 in pre-migration app.js
+ */
+/*
 const VP={
-  v:null,wrap:null,playBtn:null,muteBtn:null,volSlider:null,speedBtn:null,
-  fsBtn:null,timeCur:null,timeDur:null,played:null,buffered:null,scrubber:null,
-  progressWrap:null,bigPlay:null,buffer:null,speedMenu:null,subWrap:null,subMenu:null,subBtn:null,
-  qualityWrap:null,qualityMenu:null,qualityBtn:null,
-  controls:null,nowP:null,playerE:null,
-  _inited:false,_hideTimer:null,_currentName:'',_isSeeking:false,_savedVol:1,
-  _isTranscodeStream:false,_transcodeBaseUrl:'',_seekDebounce:null,_transcodeOffset:0,
-
-  init(){
-    if(this._inited)return;
-    this.v=document.getElementById('vp');
-    this.wrap=document.getElementById('vpWrapper');
-    this.playBtn=document.getElementById('vpPlayBtn');
-    this.muteBtn=document.getElementById('vpMuteBtn');
-    this.volSlider=document.getElementById('vpVolSlider');
-    this.speedBtn=document.getElementById('vpSpeedBtn');
-    this.fsBtn=document.getElementById('vpFsBtn');
-    this.timeCur=document.getElementById('vpTimeCur');
-    this.timeDur=document.getElementById('vpTimeDur');
-    this.played=document.getElementById('vpPlayed');
-    this.buffered=document.getElementById('vpBuffered');
-    this.scrubber=document.getElementById('vpScrubber');
-    this.progressWrap=document.getElementById('vpProgressWrap');
-    this.bigPlay=document.getElementById('vpBigPlay');
-    this.buffer=document.getElementById('vpBuffer');
-    this.speedMenu=document.getElementById('vpSpeedMenu');
-    this.subWrap=document.getElementById('vpSubWrap');
-    this.subMenu=document.getElementById('vpSubMenu');
-    this.subBtn=document.getElementById('vpSubBtn');
-    this.qualityWrap=document.getElementById('vpQualityWrap');
-    this.qualityMenu=document.getElementById('vpQualityMenu');
-    this.qualityBtn=document.getElementById('vpQualityBtn');
-    this.controls=document.getElementById('vpControls');
-    this.nowP=document.getElementById('nowP');
-    this.playerE=document.getElementById('playerE');
-    if(!this.v)return;
-
-    const self=this;
-
-    // Play/Pause
-    this.playBtn.addEventListener('click',e=>{e.stopPropagation();self.togglePlay()});
-    this.bigPlay.addEventListener('click',e=>{e.stopPropagation();self.togglePlay()});
-    this.wrap.addEventListener('click',e=>{
-      if(e.target.closest('.vp-controls,.vp-speed-menu,.vp-sub-menu'))return;
-      self.togglePlay();
-    });
-    this.wrap.addEventListener('dblclick',e=>{
-      if(e.target.closest('.vp-controls'))return;
-      self.toggleFs();
-    });
-
-    // Video events
-    this.v.addEventListener('play',()=>self._onPlayState());
-    this.v.addEventListener('pause',()=>self._onPlayState());
-    this.v.addEventListener('ended',()=>self._onEnded());
-    this.v.addEventListener('timeupdate',()=>self._onTimeUpdate());
-    this.v.addEventListener('loadedmetadata',()=>self._onMeta());
-    this.v.addEventListener('progress',()=>self._onBuffer());
-    this.v.addEventListener('waiting',()=>{self.buffer.classList.add('show')});
-    this.v.addEventListener('playing',()=>{self.buffer.classList.remove('show')});
-    this.v.addEventListener('canplay',()=>{self.buffer.classList.remove('show')});
-
-    // Progress bar (seek)
-    this.progressWrap.addEventListener('mousedown',e=>{self._startSeek(e)});
-    this.progressWrap.addEventListener('mousemove',e=>{self._hoverSeek(e)});
-
-    // Volume
-    this.muteBtn.addEventListener('click',e=>{e.stopPropagation();self.toggleMute()});
-    this.volSlider.addEventListener('input',()=>{
-      self.v.volume=parseFloat(self.volSlider.value);
-      self.v.muted=false;
-      self._updateVolIcon();
-      localStorage.setItem('vp_vol',self.volSlider.value);
-    });
-
-    // Restore saved volume
-    const sv=localStorage.getItem('vp_vol');
-    if(sv!==null){this.v.volume=parseFloat(sv);this.volSlider.value=sv}
-
-    // Speed
-    this.speedMenu.querySelectorAll('.vp-speed-opt').forEach(opt=>{
-      opt.addEventListener('click',e=>{
-        e.stopPropagation();
-        const spd=parseFloat(opt.dataset.speed);
-        self.v.playbackRate=spd;
-        self.speedBtn.textContent=spd===1?'1x':spd+'x';
-        self.speedMenu.querySelectorAll('.vp-speed-opt').forEach(o=>o.classList.remove('active'));
-        opt.classList.add('active');
-      });
-    });
-
-    // Fullscreen
-    this.fsBtn.addEventListener('click',e=>{e.stopPropagation();self.toggleFs()});
-    document.addEventListener('fullscreenchange',()=>self._onFsChange());
-
-    // Controls auto-hide
-    this.wrap.addEventListener('mousemove',()=>self._showControls());
-    this.wrap.addEventListener('mouseleave',()=>self._scheduleHide());
-
-    // Keyboard (only when media page active)
-    document.addEventListener('keydown',e=>{
-      if(e.target.matches('input,textarea,select'))return;
-      if(document.querySelector('.modal-bg[style*="flex"]'))return;
-      const mp=document.getElementById('p-media');
-      if(!mp||!mp.classList.contains('active'))return;
-      if(!self.v.src)return;
-      switch(e.key){
-        case ' ':case 'k':case 'K':e.preventDefault();self.togglePlay();break;
-        case 'm':case 'M':e.preventDefault();self.toggleMute();break;
-        case 'f':case 'F':e.preventDefault();self.toggleFs();break;
-        case 'ArrowLeft':e.preventDefault();self.v.currentTime=Math.max(0,self.v.currentTime-10);break;
-        case 'ArrowRight':e.preventDefault();self.v.currentTime=Math.min(self.v.duration||0,self.v.currentTime+10);break;
-        case 'ArrowUp':e.preventDefault();self.v.volume=Math.min(1,self.v.volume+0.1);self.volSlider.value=self.v.volume;self._updateVolIcon();break;
-        case 'ArrowDown':e.preventDefault();self.v.volume=Math.max(0,self.v.volume-0.1);self.volSlider.value=self.v.volume;self._updateVolIcon();break;
-      }
-    });
-
-    this._inited=true;
-  },
-
-  load(name,url,subs,isHls,hlsMasterUrl){
-    this.init();
-    // Save position of previous video
-    this._savePosition();
-
-    if(hlsPlayer){hlsPlayer.destroy();hlsPlayer=null}
-    this._currentName=name;
-    this.v.querySelectorAll('track').forEach(t=>t.remove());
-
-    // Show video, hide placeholder
-    document.getElementById('playerW').style.display='block';
-    this.playerE.style.display='none';
-    this.v.style.display='block';
-    this.bigPlay.classList.add('show');
-    this.buffer.classList.remove('show');
-    this.wrap.classList.add('paused');
-
-    // Reset UI
-    this.played.style.width='0%';
-    this.buffered.style.width='0%';
-    this.scrubber.style.left='0%';
-    this.timeCur.textContent='0:00';
-    this.timeDur.textContent='0:00';
-    this.playBtn.textContent='▶';
-    // Hide quality selector by default (only shown for HLS)
-    this.qualityWrap.style.display='none';
-
-    // Now playing bar
-    const hlsBadge=isHls?' <span style="color:var(--grn);font-size:11px;margin-left:4px">📡 HLS Adaptive</span>':'';
-    this.nowP.style.display='flex';
-    this.nowP.innerHTML='🎬 <strong>'+esc(name)+'</strong>'+hlsBadge+' <button class="btn-s" style="margin-left:auto" onclick="window.open(\''+url+'\')">↗ Open</button>';
-
-    // Load source
-    this._isTranscodeStream=false;
-    this._transcodeBaseUrl='';
-    this._transcodeOffset=0;
-    if(isHls){
-      this._loadHls(hlsMasterUrl);
-    }else{
-      // Track if this is a transcode stream for seek handling
-      if(url.includes('/stream-transcode/')){
-        this._isTranscodeStream=true;
-        this._transcodeBaseUrl=url.split('?')[0];
-      }
-      this.v.src=url;
-      this.v.load();
-    }
-
-    // Subtitles
-    this._setupSubs(subs);
-
-    // Restore position
-    const savedTime=localStorage.getItem('vp_pos_'+name);
-    if(savedTime){
-      const t=parseFloat(savedTime);
-      if(t>2){
-        this.v.addEventListener('loadedmetadata',function once(){
-          this.currentTime=t;
-          this.removeEventListener('loadedmetadata',once);
-        });
-        toast(`Resuming from ${VP._fmtTime(t)}`,'info');
-      }
-    }
-
-    // Highlight in list
-    document.querySelectorAll('.mc').forEach(c=>c.classList.remove('playing'));
-    const mc=document.getElementById('mc-'+name);if(mc)mc.classList.add('playing');
-    document.getElementById('playerW').scrollIntoView({behavior:'smooth'});
-  },
-
-  _loadHls(masterUrl){
-    const self=this;
-    if(typeof Hls!=='undefined'&&Hls.isSupported()){
-      hlsPlayer=new Hls({
-        maxBufferLength:30,
-        maxMaxBufferLength:60,
-        startLevel:-1, // auto
-        capLevelToPlayerSize:true
-      });
-      hlsPlayer.loadSource(masterUrl);
-      hlsPlayer.attachMedia(self.v);
-      hlsPlayer.on(Hls.Events.MANIFEST_PARSED,(e,data)=>{
-        self._setupQuality(data.levels);
-      });
-      // Error recovery
-      hlsPlayer.on(Hls.Events.ERROR,(e,data)=>{
-        if(data.fatal){
-          switch(data.type){
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hlsPlayer.recoverMediaError();
-              break;
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              toast('Network error — retrying...','err');
-              setTimeout(()=>hlsPlayer.startLoad(),2000);
-              break;
-            default:
-              toast('Fatal playback error','err');
-              break;
-          }
-        }
-      });
-      // Track auto level switching for quality badge
-      hlsPlayer.on(Hls.Events.LEVEL_SWITCHED,(e,data)=>{
-        self._onLevelSwitch(data.level);
-      });
-    }else if(self.v.canPlayType('application/vnd.apple.mpegurl')){
-      // Safari native HLS
-      self.v.src=masterUrl;
-      self.v.load();
-    }
-  },
-
-  _setupQuality(levels){
-    if(!levels||!levels.length){
-      this.qualityWrap.style.display='none';
-      return;
-    }
-    this.qualityWrap.style.display='block';
-    const resLabels={2160:'4K',1440:'1440p',1080:'1080p',720:'720p',480:'480p',360:'360p',240:'240p'};
-    let html='<div class="vp-quality-opt active" data-level="-1">Auto <span class="vp-quality-badge">ABR</span></div>';
-    levels.forEach((lv,i)=>{
-      const h=lv.height||0;
-      const label=resLabels[h]||(h?h+'p':'Level '+(i+1));
-      const br=lv.bitrate?Math.round(lv.bitrate/1000)+'k':'';
-      html+=`<div class="vp-quality-opt" data-level="${i}">${label}${br?' <span style="color:var(--txt3);font-size:10px">'+br+'</span>':''}</div>`;
-    });
-    this.qualityMenu.innerHTML=html;
-    this.qualityBtn.textContent='Auto';
-
-    // Bind clicks
-    const self=this;
-    this.qualityMenu.querySelectorAll('.vp-quality-opt').forEach(opt=>{
-      opt.addEventListener('click',e=>{
-        e.stopPropagation();
-        const lvl=parseInt(opt.dataset.level);
-        if(hlsPlayer)hlsPlayer.currentLevel=lvl;
-        self.qualityMenu.querySelectorAll('.vp-quality-opt').forEach(o=>o.classList.remove('active'));
-        opt.classList.add('active');
-        if(lvl===-1){
-          self.qualityBtn.textContent='Auto';
-        }else{
-          const h=levels[lvl]?.height;
-          self.qualityBtn.textContent=resLabels[h]||h+'p';
-        }
-      });
-    });
-  },
-
-  _onLevelSwitch(level){
-    // Update quality badge when auto-switching
-    if(!hlsPlayer||hlsPlayer.currentLevel!==-1)return; // Only update in auto mode
-    const levels=hlsPlayer.levels;
-    if(levels&&levels[level]){
-      const h=levels[level].height;
-      const resLabels={2160:'4K',1440:'1440p',1080:'1080p',720:'720p',480:'480p',360:'360p'};
-      this.qualityBtn.textContent='Auto';
-      // Flash the current quality briefly
-      this.qualityBtn.title='Quality: '+(resLabels[h]||h+'p');
-    }
-  },
-
-  _setupSubs(subs){
-    if(!subs||!subs.length){
-      this.subWrap.style.display='none';
-      return;
-    }
-    this.subWrap.style.display='block';
-    // Build menu
-    let html='<div class="vp-sub-opt active" data-idx="-1">Off</div>';
-    subs.forEach((s,i)=>{
-      // Add track to video
-      const t=document.createElement('track');
-      t.kind='subtitles';t.label=s.filename;t.src=s.url;
-      t.srclang=s.language||'und';
-      this.v.appendChild(t);
-      html+=`<div class="vp-sub-opt" data-idx="${i}">${esc(s.filename)}</div>`;
-    });
-    this.subMenu.innerHTML=html;
-
-    // Bind clicks
-    const self=this;
-    this.subMenu.querySelectorAll('.vp-sub-opt').forEach(opt=>{
-      opt.addEventListener('click',e=>{
-        e.stopPropagation();
-        const idx=parseInt(opt.dataset.idx);
-        self.subMenu.querySelectorAll('.vp-sub-opt').forEach(o=>o.classList.remove('active'));
-        opt.classList.add('active');
-        // Toggle tracks
-        for(let i=0;i<self.v.textTracks.length;i++){
-          self.v.textTracks[i].mode=(i===idx)?'showing':'hidden';
-        }
-        self.subBtn.style.color=(idx>=0)?'var(--pri2)':'';
-      });
-    });
-  },
-
-  togglePlay(){
-    if(!this.v.src)return;
-    if(this.v.paused||this.v.ended){this.v.play().catch(()=>{})}
-    else{this.v.pause()}
-  },
-
-  toggleMute(){
-    this.v.muted=!this.v.muted;
-    this._updateVolIcon();
-  },
-
-  toggleFs(){
-    const w=this.wrap;
-    if(document.fullscreenElement===w){document.exitFullscreen().catch(()=>{})}
-    else{w.requestFullscreen().catch(()=>{})}
-  },
-
-  _onPlayState(){
-    const paused=this.v.paused;
-    this.playBtn.textContent=paused?'▶':'⏸';
-    this.bigPlay.classList.toggle('show',paused);
-    this.wrap.classList.toggle('paused',paused);
-    if(!paused)this._scheduleHide();
-  },
-
-  _onEnded(){
-    this.playBtn.textContent='▶';
-    this.bigPlay.classList.add('show');
-    this.wrap.classList.add('paused');
-    // Clear saved position on completion
-    localStorage.removeItem('vp_pos_'+this._currentName);
-  },
-
-  _getDuration(){
-    // Use browser duration if valid, otherwise fallback to probe duration
-    const vd=this.v.duration;
-    if(vd&&isFinite(vd)&&vd>0)return vd;
-    return this._knownDuration||0;
-  },
-
-  _onTimeUpdate(){
-    if(this._isSeeking)return;
-    const v=this.v;
-    const dur=this._getDuration();
-    if(!dur)return;
-    // For transcode streams, add the seek offset
-    const actualTime=v.currentTime+(this._transcodeOffset||0);
-    const pct=(actualTime/dur)*100;
-    this.played.style.width=Math.min(pct,100)+'%';
-    this.scrubber.style.left=Math.min(pct,100)+'%';
-    this.timeCur.textContent=this._fmtTime(actualTime);
-    this.timeDur.textContent=this._fmtTime(dur);
-    // Auto-save position every 5 seconds
-    if(Math.floor(actualTime)%5===0&&this._currentName){
-      localStorage.setItem('vp_pos_'+this._currentName,actualTime.toFixed(1));
-    }
-  },
-
-  _onMeta(){
-    const dur=this._getDuration();
-    if(dur>0)this.timeDur.textContent=this._fmtTime(dur);
-  },
-
-  _setKnownDuration(seconds){
-    // Set duration display immediately from probe data (before video loads)
-    if(seconds>0){
-      this._knownDuration=seconds;
-      this.timeDur.textContent=this._fmtTime(seconds);
-    }
-  },
-
-  // Remux polling
-  _remuxPollId:null,
-  _remuxPath:'',
-
-  _pollRemux(path){
-    if(this._remuxPollId)clearInterval(this._remuxPollId);
-    this._remuxPath=path;
-    const self=this;
-    this._remuxPollId=setInterval(async()=>{
-      try{
-        const r=await api('GET','/api/media/remux-status/'+encodeURIComponent(path));
-        if(r.status==='ready'&&r.remux_url){
-          clearInterval(self._remuxPollId);self._remuxPollId=null;
-          // Switch to seekable remuxed version
-          const curTime=self.v.currentTime||0;
-          const wasPlaying=!self.v.paused;
-          self.v.src=r.remux_url;
-          self.v.load();
-          self.v.addEventListener('loadedmetadata',function once(){
-            if(curTime>2)self.v.currentTime=curTime;
-            if(wasPlaying)self.v.play().catch(()=>{});
-            self.v.removeEventListener('loadedmetadata',once);
-          });
-          // Update now playing badge
-          const badge=self.nowP.querySelector('.remux-badge');
-          if(badge)badge.innerHTML='✅ Seekable';
-          toast('Video now seekable! 🎯','ok');
-        }else if(r.status==='remuxing'&&r.progress){
-          const badge=self.nowP.querySelector('.remux-badge');
-          if(badge){
-            const pct=r.progress.percent||0;
-            const type=r.progress.type||'remuxing';
-            badge.innerHTML=`<span class="spin"></span> ${type} ${pct}%`;
-          }
-        }
-      }catch(e){}
-    },2000);
-  },
-
-  stopRemuxPoll(){
-    if(this._remuxPollId){clearInterval(this._remuxPollId);this._remuxPollId=null}
-  },
-
-  _onBuffer(){
-    const v=this.v;
-    if(v.buffered.length>0){
-      const end=v.buffered.end(v.buffered.length-1);
-      const dur=this._getDuration()||1;
-      const pct=(end/dur)*100;
-      this.buffered.style.width=Math.min(pct,100)+'%';
-    }
-  },
-
-  _startSeek(e){
-    e.preventDefault();e.stopPropagation();
-    this._isSeeking=true;
-    const self=this;
-    const seek=ev=>{
-      const rect=self.progressWrap.getBoundingClientRect();
-      const pct=Math.max(0,Math.min(1,(ev.clientX-rect.left)/rect.width));
-      self.played.style.width=(pct*100)+'%';
-      self.scrubber.style.left=(pct*100)+'%';
-      const dur=self._getDuration();
-      if(dur>0){
-        const seekTime=pct*dur;
-        self.timeCur.textContent=self._fmtTime(seekTime);
-        if(self._isTranscodeStream&&self._transcodeBaseUrl){
-          // Debounce transcode seek — restart ffmpeg from new position
-          clearTimeout(self._seekDebounce);
-          self._seekDebounce=setTimeout(()=>{
-            self.buffer.classList.add('show');
-            self.v.src=self._transcodeBaseUrl+'?ss='+seekTime.toFixed(1);
-            self.v.load();
-            self.v.play().catch(()=>{});
-            // Track the offset so time display is correct
-            self._transcodeOffset=seekTime;
-          },300);
-        }else{
-          self.v.currentTime=seekTime;
-        }
-      }
-    };
-    seek(e);
-    const onMove=ev=>seek(ev);
-    const onUp=()=>{
-      self._isSeeking=false;
-      document.removeEventListener('mousemove',onMove);
-      document.removeEventListener('mouseup',onUp);
-    };
-    document.addEventListener('mousemove',onMove);
-    document.addEventListener('mouseup',onUp);
-  },
-
-  _hoverSeek(e){
-    const rect=this.progressWrap.getBoundingClientRect();
-    const pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
-    const ht=document.getElementById('vpHoverTime');
-    const dur=this._getDuration();
-    if(dur>0){
-      ht.textContent=this._fmtTime(pct*dur);
-      ht.style.left=(e.clientX-rect.left)+'px';
-    }
-  },
-
-  _updateVolIcon(){
-    if(this.v.muted||this.v.volume===0)this.muteBtn.textContent='🔇';
-    else if(this.v.volume<0.5)this.muteBtn.textContent='🔉';
-    else this.muteBtn.textContent='🔊';
-    this.volSlider.value=this.v.muted?0:this.v.volume;
-  },
-
-  _showControls(){
-    this.wrap.classList.add('show-controls');
-    clearTimeout(this._hideTimer);
-    if(!this.v.paused)this._scheduleHide();
-  },
-
-  _scheduleHide(){
-    clearTimeout(this._hideTimer);
-    this._hideTimer=setTimeout(()=>{
-      if(!this.v.paused)this.wrap.classList.remove('show-controls');
-    },2500);
-  },
-
-  _onFsChange(){
-    this.fsBtn.textContent=document.fullscreenElement?'⛶':'⛶';
-  },
-
-  _savePosition(){
-    if(this._currentName&&this.v&&this.v.currentTime>2){
-      localStorage.setItem('vp_pos_'+this._currentName,this.v.currentTime.toFixed(1));
-    }
-  },
-
-  _fmtTime(s){
-    if(!s||isNaN(s))return'0:00';
-    s=Math.floor(s);
-    const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
-    if(h>0)return h+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
-    return m+':'+String(sec).padStart(2,'0');
-  }
+  // ... entire VP controller removed for Phase 1 migration ...
+  // See MIGRATION_MAP.md for details
 };
 
 // Save position when leaving page
 window.addEventListener('beforeunload',()=>VP._savePosition());
+*/
+/* === PHASE1_REMOVED_END === */
+
 
 // === Play media file from File Manager ===
 async function playMediaFile(path){
@@ -1195,9 +686,6 @@ async function playMediaFile(path){
   const isVideo=VID_EXTS.includes(ext);
   const isAudio=AUD_EXTS.includes(ext);
 
-  // Stop any existing remux polling
-  VP.stopRemuxPoll();
-
   // For audio files — just direct stream
   if(isAudio){
     const directUrl=base()+'/stream/'+encodeURIComponent(path);
@@ -1214,34 +702,25 @@ async function playMediaFile(path){
     const duration=probe.duration||0;
     const remux=probe.remux||{};
 
-    // Set duration immediately (before video loads)
-    VP.init();
-    if(duration>0)VP._setKnownDuration(duration);
-
     let streamUrl;
     let needsRemux=false;
 
     // Check if remuxed version is already available
     if(remux.status==='ready'&&remux.remux_url){
-      // Use seekable remuxed version!
       streamUrl=remux.remux_url;
     }else if(probe.browser_compatible&&!probe.needs_remux){
-      // Direct stream — already browser compatible & seekable
       streamUrl=base()+'/stream/'+encodeURIComponent(path);
     }else if(probe.needs_transcode){
-      // Needs full transcode — use stream-transcode for now
       streamUrl=base()+'/stream-transcode/'+encodeURIComponent(path);
       needsRemux=true;
     }else if(probe.needs_remux){
-      // Needs remux only (fast) — use direct stream temporarily
       streamUrl=base()+'/stream/'+encodeURIComponent(path);
       needsRemux=true;
     }else{
-      // Fallback: direct stream
       streamUrl=base()+'/stream/'+encodeURIComponent(path);
     }
 
-    // Trigger background remux if needed (auto for ALL non-seekable videos)
+    // Trigger background remux if needed
     if(needsRemux&&remux.status!=='ready'){
       if(remux.status==='not_started'){
         try{
@@ -1254,24 +733,9 @@ async function playMediaFile(path){
     api('GET','/api/media').then(d=>{
       const m=(d.media||[]).find(x=>x.path===path||x.filename===filename);
       playM(filename,streamUrl,m&&m.subtitles?m.subtitles:[]);
-
-      // If remuxing, add badge and start polling
-      if(needsRemux&&remux.status!=='ready'){
-        const badge=VP.nowP.querySelector('.remux-badge');
-        if(!badge){
-          const typeLabel=probe.needs_transcode?'Transcoding':'Remuxing';
-          VP.nowP.innerHTML+=' <span class="remux-badge" style="color:var(--ylw);font-size:11px;margin-left:8px"><span class="spin"></span> '+typeLabel+'... (will auto-switch)</span>';
-        }
-        VP._pollRemux(path);
-      }else if(remux.status==='ready'){
-        VP.nowP.innerHTML+=' <span class="remux-badge" style="color:var(--grn);font-size:11px;margin-left:8px">✅ Seekable</span>';
-      }else if(probe.browser_compatible){
-        VP.nowP.innerHTML+=' <span class="remux-badge" style="color:var(--grn);font-size:11px;margin-left:8px">✅ Direct Play</span>';
-      }
     }).catch(()=>playM(filename,streamUrl,[]));
 
   }catch(e){
-    // Probe failed — fallback to old behavior
     console.warn('Probe failed, using fallback:',e);
     const directUrl=base()+'/stream/'+encodeURIComponent(path);
     api('GET','/api/media').then(d=>{
@@ -1281,19 +745,22 @@ async function playMediaFile(path){
   }
 }
 function playM(name,url,subs){
-  VP.load(name,url,subs,false,null);
+  // Phase 2: delegate to PlayerModule
+  if(window.PlayerModule)window.PlayerModule.open(url,name);
 }
-function loadHlsLib(){return new Promise((res,rej)=>{if(window.Hls)return res();const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/hls.js@latest';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+function loadHlsLib(){
+  // HLS.js is now loaded via <script> tag
+  return Promise.resolve();
+}
 async function playHls(name,masterUrl,subs){
-  try{await loadHlsLib()}catch{toast('Failed to load HLS.js','err');return}
-  VP.load(name,masterUrl,subs,true,masterUrl);
+  // Phase 2: delegate to PlayerModule
+  if(window.PlayerModule)window.PlayerModule.open(masterUrl,name);
 }
 async function startHls(path){
   try{const r=await api('POST','/api/media/hls/'+encodeURIComponent(path));toast('HLS transcoding '+r.status,'ok');setTimeout(()=>rMedia(),2000)}
   catch(e){toast(e.message,'err')}
 }
 
-// Share
 let shareTarget='';
 function shareFile(filepath){
   shareTarget=filepath;

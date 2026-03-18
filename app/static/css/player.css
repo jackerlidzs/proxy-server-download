@@ -1,0 +1,172 @@
+:root {
+  --plyr-color-main: #E50914;
+  --plyr-control-radius: 6px;
+  --plyr-font-family: system-ui, -apple-system, sans-serif;
+  --plyr-video-controls-background:
+    linear-gradient(transparent, rgba(0,0,0,0.8));
+  --plyr-control-icon-size: 18px;
+}
+
+.player-container {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.plyr {
+  width: 100%;
+  aspect-ratio: 16/9;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.player-status-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.9);
+  color: #fff; z-index: 999; gap: 16px;
+  border-radius: 12px;
+}
+.player-status-overlay.hidden { display: none; }
+
+.player-spinner {
+  width: 40px; height: 40px;
+  border: 3px solid rgba(255,255,255,0.15);
+  border-top-color: #E50914;
+  border-radius: 50%;
+  animation: playerSpin 0.8s linear infinite;
+}
+@keyframes playerSpin { to { transform: rotate(360deg); } }
+
+/* Resume toast */
+.resume-toast {
+  position: absolute;
+  bottom: 80px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 12px 18px;
+  z-index: 998;
+  display: flex; flex-direction: column;
+  align-items: center; gap: 10px;
+  color: #fff; font-size: 13px;
+  animation: toastIn 0.3s ease;
+}
+.resume-toast.hidden { display: none; }
+.resume-toast.toast-hiding {
+  animation: toastOut 0.25s ease forwards;
+}
+
+@keyframes toastOut {
+  from { transform: translateX(-50%) translateY(0);    opacity: 1; }
+  to   { transform: translateX(-50%) translateY(12px); opacity: 0; }
+}
+
+@keyframes toastIn {
+  from { transform: translateX(-50%) translateY(10px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);    opacity: 1; }
+}
+
+.toast-actions {
+  display: flex; gap: 8px;
+}
+.btn-resume {
+  padding: 6px 16px;
+  background: #E50914;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-resume:hover { background: #ff1a25; }
+
+.btn-restart {
+  padding: 6px 16px;
+  background: rgba(255,255,255,0.1);
+  color: #ccc;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-restart:hover { background: rgba(255,255,255,0.2); }
+
+/* PiP overlay */
+.pip-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.82);
+  backdrop-filter: blur(6px);
+  color: #fff; z-index: 50; gap: 16px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+.pip-overlay.hidden { display: none; }
+
+#pip-return {
+  padding: 8px 24px;
+  background: #E50914; color: #fff;
+  border: none; border-radius: 6px;
+  cursor: pointer; font-size: 14px; font-weight: 600;
+  transition: background 0.2s;
+}
+#pip-return:hover { background: #f40612; }
+
+/* PiP button in Plyr controls */
+.pip-control.plyr__control--pressed svg { color: #E50914; }
+.pip-control:hover { background: rgba(255,255,255,0.1) !important; }
+
+/* Phase 5: Seek flash */
+.seek-flash {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  background: rgba(0,0,0,0.65);
+  color: #fff; padding: 8px 18px;
+  border-radius: 20px; font-size: 14px;
+  font-weight: 600; pointer-events: none;
+  animation: seekFlashFade 0.7s ease forwards;
+  z-index: 200;
+}
+.seek-flash--left  { left: 12%; }
+.seek-flash--right { right: 12%; }
+
+@keyframes seekFlashFade {
+  0%   { opacity: 1; transform: translateY(-50%) scale(1); }
+  100% { opacity: 0; transform: translateY(-50%) scale(1.15); }
+}
+
+/* Speed menu active state */
+.plyr__menu__container
+  [role=menuitemradio][aria-checked=true]::before {
+  background: #E50914;
+}
+
+/* Seek bar thumb */
+.plyr--video
+  .plyr__progress input[type=range]::-webkit-slider-thumb {
+  width: 13px; height: 13px;
+}
+.plyr--video
+  .plyr__progress input[type=range]::-moz-range-thumb {
+  width: 13px; height: 13px;
+}
+
+/* Volume slider */
+.plyr__volume { width: 80px; }
+
+/* Mobile: ẩn bớt trên màn hình nhỏ */
+@media (max-width: 480px) {
+  .plyr__volume         { display: none; }
+  .plyr__time--duration { display: none; }
+}
