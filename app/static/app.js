@@ -310,15 +310,15 @@ function renderFM(){
       const ic=icons[f.type]||'📄';
       const ext=(f.ext||'').toLowerCase();
       const isMedia=VID_EXTS.includes(ext)||AUD_EXTS.includes(ext);
-      const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
-        isMedia?`ondblclick="playMediaFile('${esc(f.path)}')"`:
-        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`:
-        f.download_url?`ondblclick="window.open('${f.download_url}')"`:'';
-      const archBtn=f.type==='archive'?`<button class="btn-o" style="position:absolute;bottom:4px;right:4px;font-size:9px;padding:2px 5px" onclick="event.stopPropagation();extractF('${esc(f.path)}')">📦</button>`:'';
+      const dbl=f.type==='folder'?`ondblclick="fmGo('${escJs(f.path)}')"`:
+        isMedia?`ondblclick="playMediaFile('${escJs(f.path)}')"`:
+        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${escJs(f.path)}')"`:
+        f.download_url?`ondblclick="window.open('${escJs(f.download_url)}')"`:'';
+      const archBtn=f.type==='archive'?`<button class="btn-o" style="position:absolute;bottom:4px;right:4px;font-size:9px;padding:2px 5px" onclick="event.stopPropagation();extractF('${escJs(f.path)}')">📦</button>`:'';
       // Image thumbnail
       let thumb='';
       if(IMG_EXTS.includes(ext)&&f.download_url)thumb=`<img class="fm-thumb" src="${f.download_url}" loading="lazy" onerror="this.style.display='none'">`;
-      return`<div class="fm-item" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-check">✓</div>${thumb||`<span class="fm-icon">${ic}</span>`}<div class="fm-fname">${esc(f.name)}</div><div class="fm-fsize">${f.size_human}${f.items!=null?' · '+f.items+' items':''}</div>${archBtn}</div>`;
+      return`<div class="fm-item" onclick="fmSel(this,'${escJs(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${escJs(f.path)}')"><div class="fm-check">✓</div>${thumb||`<span class="fm-icon">${ic}</span>`}<div class="fm-fname">${esc(f.name)}</div><div class="fm-fsize">${f.size_human}${f.items!=null?' · '+f.items+' items':''}</div>${archBtn}</div>`;
     }).join('')+'</div>';
   }else{
     const sa=k=>fmSort===k?(fmSortDir>0?'▲':'▼'):'';
@@ -326,11 +326,11 @@ function renderFM(){
       const ic=icons[f.type]||'📄';
       const ext=(f.ext||'').toLowerCase();
       const isMedia=VID_EXTS.includes(ext)||AUD_EXTS.includes(ext);
-      const dbl=f.type==='folder'?`ondblclick="fmGo('${esc(f.path)}')"`:
-        isMedia?`ondblclick="playMediaFile('${esc(f.path)}')"`:
-        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${esc(f.path)}')"`
-        :f.download_url?`ondblclick="window.open('${f.download_url}')"`:''
-      return`<div class="fm-row" onclick="fmSel(this,'${esc(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${esc(f.path)}')"><div class="fm-check">✓</div><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div></div>`;
+      const dbl=f.type==='folder'?`ondblclick="fmGo('${escJs(f.path)}')"`:
+        isMedia?`ondblclick="playMediaFile('${escJs(f.path)}')"`:
+        (TEXT_EXTS.includes(ext)||IMG_EXTS.includes(ext))?`ondblclick="openPreview('${escJs(f.path)}')"`
+        :f.download_url?`ondblclick="window.open('${escJs(f.download_url)}')"`:''
+      return`<div class="fm-row" onclick="fmSel(this,'${escJs(f.path)}')" ${dbl} data-path="${esc(f.path)}" oncontextmenu="fmCtx(event,'${escJs(f.path)}')"><div class="fm-check">✓</div><div class="fm-row-name"><span>${ic}</span>${esc(f.name)}</div><div style="color:var(--txt3);font-size:12px">${f.size_human}</div><div style="color:var(--txt3);font-size:12px">${f.mime_type||f.type}</div></div>`;
     }).join('')+'</div>';
   }
 }
@@ -633,11 +633,11 @@ function renderM(items){
     const hlsS=m.hls?m.hls.status:'none';
     let hlsBtn='';
     if(isV){
-      if(hlsS==='ready')hlsBtn=`<button class="btn-g" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();playHls('${esc(m.path)}','${esc(m.filename)}','${m.hls.master_url}')">▶ HLS</button>`;
+      if(hlsS==='ready')hlsBtn=`<button class="btn-g" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();playHls('${escJs(m.path)}','${escJs(m.filename)}','${escJs(m.hls.master_url)}')">▶ HLS</button>`;
       else if(hlsS==='transcoding')hlsBtn=`<div style="font-size:10px;color:var(--ylw);margin-top:4px"><span class="spin"></span> Transcoding ${m.hls.progress?.percent||0}%</div>`;
-      else hlsBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();startHls('${esc(m.path)}')">📡 Create HLS</button>`;
+      else hlsBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px" onclick="event.stopPropagation();startHls('${escJs(m.path)}')">📡 Create HLS</button>`;
     }
-    let shareBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px;margin-left:4px" onclick="event.stopPropagation();shareFile('${esc(m.path)}')">🔗 Share</button>`;
+    let shareBtn=`<button class="btn-s" style="font-size:10px;margin-top:4px;margin-left:4px" onclick="event.stopPropagation();shareFile('${escJs(m.path)}')">🔗 Share</button>`;
     // Phase 5: Progress bar + watch badge
     const saved=getProgress(m.path);
     const pct=saved?Math.round(saved.percentage):0;
@@ -645,7 +645,7 @@ function renderM(items){
     progressH+=`<div class="card-progress-bar"><div class="card-progress-fill" style="width:${pct}%"></div></div>`;
     if(pct>5&&pct<95) progressH+=`<span class="watch-badge watching">Đang xem</span>`;
     else if(pct>=95) progressH+=`<span class="watch-badge watched">Đã xem</span>`;
-    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playMediaFile('${esc(m.path)}')"><div class="mc-top" style="position:relative"><div class="mc-icon">${ic}</div>${badge}${progressH}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
+    return`<div class="mc" id="mc-${esc(m.filename)}" onclick="playMediaFile('${escJs(m.path)}')"><div class="mc-top" style="position:relative"><div class="mc-icon">${ic}</div>${badge}${progressH}</div><div class="mc-name">${esc(m.filename)}</div><div class="mc-meta"><span>${m.size_human}</span>${subH}</div>${hlsBtn}${shareBtn}</div>`;
   }).join('');
 }
 let hlsPlayer=null;
@@ -790,6 +790,7 @@ function cpFallback(u){
 }
 function hs(b){if(!b)return'0 B';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return b.toFixed(1)+' '+u[i]}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function escJs(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
 function toast(m,t='info'){
   const w=document.getElementById('toasts');const c=t==='ok'?'t-ok':t==='err'?'t-err':'t-info';
   const i=t==='ok'?'✓':t==='err'?'✕':'ℹ';const e=document.createElement('div');e.className='toast '+c;
