@@ -700,14 +700,22 @@ async function playMediaFile(path){
 
   // For video files — probe codec, build correct stream URL, then open
   if(isVideo&&window.PlayerModule){
-    let streamUrl='/stream-transcode/'+encodeURIComponent(path);
+    // Smart default: .mp4/.webm/.m4v/.mov → /stream/ (most are H.264+AAC)
+    // .mkv/.avi/.flv/.ts → /stream-transcode/ (browser can't play these containers)
+    const DIRECT_EXTS=['.mp4','.webm','.m4v','.mov'];
+    let streamUrl=DIRECT_EXTS.includes(ext)
+      ? base()+'/stream/'+encodeURIComponent(path)
+      : '/stream-transcode/'+encodeURIComponent(path);
     try{
       const probe=await api('GET','/api/media/probe/'+encodeURIComponent(path));
-      if(probe.browser_compatible){
-        // H.264+AAC in MP4/WebM → stream trực tiếp, không cần transcode
+      if(probe.needs_transcode){
+        // Codec không tương thích (H.265, etc.) → cần transcode
+        streamUrl='/stream-transcode/'+encodeURIComponent(path);
+      }else{
+        // Codec OK → stream trực tiếp
         streamUrl=base()+'/stream/'+encodeURIComponent(path);
       }
-    }catch(e){console.warn('Probe failed, using transcode:',e)}
+    }catch(e){console.warn('Probe failed, using default for '+ext,e)}
     window.PlayerModule.open(path,filename,streamUrl);
     return;
   }
