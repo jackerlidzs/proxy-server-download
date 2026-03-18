@@ -39,10 +39,11 @@
         var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
         loadPlayerDirect(filePath, directUrl);
 
-        // Trigger HLS convert ngầm (fire and forget)
-        if (statusData.status === 'not_started') {
-          triggerHlsConvert(filePath);
-        }
+        // Auto HLS convert disabled — server chỉ có 2 CPU core,
+        // ffmpeg ngầm gây lag stream. User dùng nút "Create HLS" thủ công.
+        // if (statusData.status === 'not_started') {
+        //   triggerHlsConvert(filePath);
+        // }
         // Không cần waitUntilReady — lần sau mở lại sẽ dùng HLS
       }
     },
