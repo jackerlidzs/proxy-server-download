@@ -1,328 +1,427 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Proxy Server v5</title>
-<meta name="description" content="Advanced Download Proxy + Media Server with file management, streaming, and deduplication">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
-<link rel="stylesheet" href="/static/css/plyr.css" />
-<link rel="stylesheet" href="/static/css/player.css" />
-<!-- CodeMirror 6 (bare esm.sh - no version pinning to avoid export mismatches) -->
-<script type="module" id="cm-init">
-try{
-  const cm = await import('https://esm.sh/codemirror');
-  const state = await import('https://esm.sh/@codemirror/state');
-  const view = await import('https://esm.sh/@codemirror/view');
-  const theme = await import('https://esm.sh/@codemirror/theme-one-dark');
-  const [js,ht,cs,jn,xm,py,ph,sq,md] = await Promise.all([
-    import('https://esm.sh/@codemirror/lang-javascript'),
-    import('https://esm.sh/@codemirror/lang-html'),
-    import('https://esm.sh/@codemirror/lang-css'),
-    import('https://esm.sh/@codemirror/lang-json'),
-    import('https://esm.sh/@codemirror/lang-xml'),
-    import('https://esm.sh/@codemirror/lang-python'),
-    import('https://esm.sh/@codemirror/lang-php'),
-    import('https://esm.sh/@codemirror/lang-sql'),
-    import('https://esm.sh/@codemirror/lang-markdown')
-  ]);
-  window._CM = {
-    EditorView: cm.EditorView, basicSetup: cm.basicSetup,
-    EditorState: state.EditorState, keymap: view.keymap, oneDark: theme.oneDark,
-    langs: {javascript:js.javascript, html:ht.html, css:cs.css, json:jn.json,
-            xml:xm.xml, python:py.python, php:ph.php, sql:sq.sql, markdown:md.markdown}
-  };
-  window._cmReady = true;
-  window.dispatchEvent(new Event('cm-ready'));
-}catch(e){
-  console.warn('CodeMirror load failed, using textarea:',e);
-  window._cmReady = false;
-}
-</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Proxy Server v5</title>
+  <meta name="description"
+    content="Advanced Download Proxy + Media Server with file management, streaming, and deduplication">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/css/plyr.css" />
+  <link rel="stylesheet" href="/static/css/player.css" />
+  <!-- CodeMirror 6 (bare esm.sh - no version pinning to avoid export mismatches) -->
+  <script type="module" id="cm-init">
+    try {
+      const cm = await import('https://esm.sh/codemirror');
+      const state = await import('https://esm.sh/@codemirror/state');
+      const view = await import('https://esm.sh/@codemirror/view');
+      const theme = await import('https://esm.sh/@codemirror/theme-one-dark');
+      const [js, ht, cs, jn, xm, py, ph, sq, md] = await Promise.all([
+        import('https://esm.sh/@codemirror/lang-javascript'),
+        import('https://esm.sh/@codemirror/lang-html'),
+        import('https://esm.sh/@codemirror/lang-css'),
+        import('https://esm.sh/@codemirror/lang-json'),
+        import('https://esm.sh/@codemirror/lang-xml'),
+        import('https://esm.sh/@codemirror/lang-python'),
+        import('https://esm.sh/@codemirror/lang-php'),
+        import('https://esm.sh/@codemirror/lang-sql'),
+        import('https://esm.sh/@codemirror/lang-markdown')
+      ]);
+      window._CM = {
+        EditorView: cm.EditorView, basicSetup: cm.basicSetup,
+        EditorState: state.EditorState, keymap: view.keymap, oneDark: theme.oneDark,
+        langs: {
+          javascript: js.javascript, html: ht.html, css: cs.css, json: jn.json,
+          xml: xm.xml, python: py.python, php: ph.php, sql: sq.sql, markdown: md.markdown
+        }
+      };
+      window._cmReady = true;
+      window.dispatchEvent(new Event('cm-ready'));
+    } catch (e) {
+      console.warn('CodeMirror load failed, using textarea:', e);
+      window._cmReady = false;
+    }
+  </script>
 </head>
+
 <body>
 
-<!-- Auth Modal -->
-<div id="authM" class="modal-bg" style="display:none">
-<div class="modal">
-<h2>🔐 Connect</h2>
-<div class="tabs"><button class="tab active" onclick="stab('apikey',this)">API Key</button><button class="tab" onclick="stab('jwtlogin',this)">Login</button></div>
-<div id="tab-apikey" class="tc active">
-<div class="fg"><label class="fl">API Key</label><input type="password" id="aKey" class="fi" placeholder="Enter your API key" autofocus></div>
-<div class="fg"><label class="fl">Server URL</label><input type="text" id="aUrl" class="fi"><div class="fh">Leave empty to use current URL</div></div>
-<button class="btn btn-p" onclick="auth()" style="width:100%;padding:10px;font-size:14px">🔐 Connect</button>
-</div>
-<div id="tab-jwtlogin" class="tc">
-<div class="fg"><label class="fl">Username</label><input type="text" id="jwtUser" class="fi" placeholder="Enter username"></div>
-<div class="fg"><label class="fl">Password</label><input type="password" id="jwtPass" class="fi" placeholder="Enter password"></div>
-<div class="fg"><label class="fl">Server URL</label><input type="text" id="jwtUrl" class="fi"><div class="fh">Leave empty to use current URL</div></div>
-<button class="btn btn-p" onclick="jwtLogin()" style="width:100%;padding:10px;font-size:14px">🔐 Login</button>
-</div>
-</div></div>
+  <!-- Auth Modal -->
+  <div id="authM" class="modal-bg" style="display:none">
+    <div class="modal">
+      <h2>🔐 Connect</h2>
+      <div class="tabs"><button class="tab active" onclick="stab('apikey',this)">API Key</button><button class="tab"
+          onclick="stab('jwtlogin',this)">Login</button></div>
+      <div id="tab-apikey" class="tc active">
+        <div class="fg"><label class="fl">API Key</label><input type="password" id="aKey" class="fi"
+            placeholder="Enter your API key" autofocus></div>
+        <div class="fg"><label class="fl">Server URL</label><input type="text" id="aUrl" class="fi">
+          <div class="fh">Leave empty to use current URL</div>
+        </div>
+        <button class="btn btn-p" onclick="auth()" style="width:100%;padding:10px;font-size:14px">🔐 Connect</button>
+      </div>
+      <div id="tab-jwtlogin" class="tc">
+        <div class="fg"><label class="fl">Username</label><input type="text" id="jwtUser" class="fi"
+            placeholder="Enter username"></div>
+        <div class="fg"><label class="fl">Password</label><input type="password" id="jwtPass" class="fi"
+            placeholder="Enter password"></div>
+        <div class="fg"><label class="fl">Server URL</label><input type="text" id="jwtUrl" class="fi">
+          <div class="fh">Leave empty to use current URL</div>
+        </div>
+        <button class="btn btn-p" onclick="jwtLogin()" style="width:100%;padding:10px;font-size:14px">🔐 Login</button>
+      </div>
+    </div>
+  </div>
 
-<!-- Rename Modal -->
-<div id="renameM" class="modal-bg" style="display:none">
-<div class="modal">
-<h2>✏️ Rename</h2><p id="renameOld"></p>
-<div class="fg"><label class="fl">New Name</label><input type="text" id="renameIn" class="fi"></div>
-<div style="display:flex;gap:8px"><button class="btn btn-p" style="flex:1" onclick="doRename()">Rename</button><button class="btn btn-s" style="flex:1" onclick="closeRename()">Cancel</button></div>
-</div></div>
+  <!-- Rename Modal -->
+  <div id="renameM" class="modal-bg" style="display:none">
+    <div class="modal">
+      <h2>✏️ Rename</h2>
+      <p id="renameOld"></p>
+      <div class="fg"><label class="fl">New Name</label><input type="text" id="renameIn" class="fi"></div>
+      <div style="display:flex;gap:8px"><button class="btn btn-p" style="flex:1"
+          onclick="doRename()">Rename</button><button class="btn btn-s" style="flex:1"
+          onclick="closeRename()">Cancel</button></div>
+    </div>
+  </div>
 
-<!-- Preview/Editor Modal -->
-<div id="previewM" class="modal-bg" style="display:none" onclick="if(event.target===this)closePreview()">
-<div class="modal" style="max-width:900px;width:90vw;max-height:90vh;display:flex;flex-direction:column">
-<div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--border)">
-<h2 id="prevTitle" style="margin:0;font-size:16px">📄 Preview</h2>
-<div style="display:flex;gap:6px;align-items:center">
-<button class="btn btn-p" id="prevSaveBtn" style="display:none;font-size:12px;padding:4px 12px" onclick="savePreview()">💾 Save</button>
-<button class="btn btn-s" style="font-size:12px;padding:4px 10px" onclick="closePreview()">✕</button>
-</div>
-</div>
-<div id="prevBody" style="flex:1;overflow:auto;margin-top:8px;min-height:200px"></div>
-</div>
-</div>
+  <!-- Preview/Editor Modal -->
+  <div id="previewM" class="modal-bg" style="display:none" onclick="if(event.target===this)closePreview()">
+    <div class="modal" style="max-width:900px;width:90vw;max-height:90vh;display:flex;flex-direction:column">
+      <div
+        style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--border)">
+        <h2 id="prevTitle" style="margin:0;font-size:16px">📄 Preview</h2>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-p" id="prevSaveBtn" style="display:none;font-size:12px;padding:4px 12px"
+            onclick="savePreview()">💾 Save</button>
+          <button class="btn btn-s" style="font-size:12px;padding:4px 10px" onclick="closePreview()">✕</button>
+        </div>
+      </div>
+      <div id="prevBody" style="flex:1;overflow:auto;margin-top:8px;min-height:200px"></div>
+    </div>
+  </div>
 
-<!-- Context Menu -->
-<div id="ctxMenu" class="ctx-menu" style="display:none">
-<div class="ctx-item" onclick="ctxAction('open')">👁 Open / Preview</div>
-<div class="ctx-item" id="ctxEdit" onclick="ctxAction('edit')" style="display:none">✏️ Edit Code</div>
-<div class="ctx-item" id="ctxExtract" onclick="ctxAction('extract')" style="display:none">📦 Extract</div>
-<div class="ctx-sep"></div>
-<div class="ctx-item" onclick="ctxAction('rename')">✏ Rename</div>
-<div class="ctx-item" onclick="ctxAction('copy')">📋 Copy</div>
-<div class="ctx-item" onclick="ctxAction('share')">🔗 Share</div>
-<div class="ctx-item" onclick="ctxAction('download')">⬇️ Download</div>
+  <!-- Context Menu -->
+  <div id="ctxMenu" class="ctx-menu" style="display:none">
+    <div class="ctx-item" onclick="ctxAction('open')">👁 Open / Preview</div>
+    <div class="ctx-item" id="ctxEdit" onclick="ctxAction('edit')" style="display:none">✏️ Edit Code</div>
+    <div class="ctx-item" id="ctxExtract" onclick="ctxAction('extract')" style="display:none">📦 Extract</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" onclick="ctxAction('rename')">✏ Rename</div>
+    <div class="ctx-item" onclick="ctxAction('copy')">📋 Copy</div>
+    <div class="ctx-item" onclick="ctxAction('share')">🔗 Share</div>
+    <div class="ctx-item" onclick="ctxAction('download')">⬇️ Download</div>
 
-<div class="ctx-item" onclick="ctxAction('info')">ℹ️ Info</div>
-<div class="ctx-sep"></div>
-<div class="ctx-item ctx-danger" onclick="ctxAction('delete')">🗑 Delete</div>
-</div>
+    <div class="ctx-item" onclick="ctxAction('info')">ℹ️ Info</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item ctx-danger" onclick="ctxAction('delete')">🗑 Delete</div>
+  </div>
 
-<!-- Universal Dialog Modal (replaces alert/confirm/prompt) -->
-<div id="dialogM" class="modal-bg" style="display:none">
-<div class="modal" style="max-width:400px">
-<h2 id="dlgTitle">Confirm</h2>
-<p id="dlgMsg" style="color:var(--txt2);font-size:13px;margin:8px 0 16px;line-height:1.5"></p>
-<div id="dlgInput" style="display:none"><input type="text" id="dlgIn" class="fi" style="margin-bottom:12px"></div>
-<div style="display:flex;gap:8px;justify-content:flex-end">
-<button class="btn btn-s" id="dlgCancel" onclick="dlgResolve(null)" style="min-width:80px">Cancel</button>
-<button class="btn btn-p" id="dlgOk" onclick="dlgOk()" style="width:auto;min-width:80px">OK</button>
-</div>
-</div></div>
+  <!-- Universal Dialog Modal (replaces alert/confirm/prompt) -->
+  <div id="dialogM" class="modal-bg" style="display:none">
+    <div class="modal" style="max-width:400px">
+      <h2 id="dlgTitle">Confirm</h2>
+      <p id="dlgMsg" style="color:var(--txt2);font-size:13px;margin:8px 0 16px;line-height:1.5"></p>
+      <div id="dlgInput" style="display:none"><input type="text" id="dlgIn" class="fi" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-s" id="dlgCancel" onclick="dlgResolve(null)" style="min-width:80px">Cancel</button>
+        <button class="btn btn-p" id="dlgOk" onclick="dlgOk()" style="width:auto;min-width:80px">OK</button>
+      </div>
+    </div>
+  </div>
 
-<!-- Share Link Modal -->
-<div id="shareM" class="modal-bg" style="display:none" onclick="if(event.target===this)closeShare()">
-<div class="modal" style="max-width:420px">
-<h2>🔗 Create Share Link</h2>
-<p id="shareFileName" style="color:var(--txt2);font-size:12px;word-break:break-all;margin-bottom:12px"></p>
-<div class="fg"><label class="fl">Expire after (hours)</label><input type="number" id="shareHours" class="fi" value="24" min="0" placeholder="0 = never expires"></div>
-<div class="fg"><label class="fl">Password (optional)</label><input type="text" id="sharePwd" class="fi" placeholder="Leave empty for no password"></div>
-<div id="shareResult" style="display:none;margin:12px 0">
-<label class="fl" style="margin-bottom:4px">Share URL</label>
-<div style="display:flex;gap:6px"><input type="text" id="shareUrl" class="fi" readonly style="flex:1"><button class="btn btn-p" style="padding:6px 12px" onclick="cpL(document.getElementById('shareUrl').value)">📋 Copy</button></div>
-</div>
-<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-<button class="btn btn-s" onclick="closeShare()">Close</button>
-<button class="btn btn-p" id="shareGoBtn" onclick="doShare()">🔗 Create</button>
-</div>
-</div></div>
+  <!-- Share Link Modal -->
+  <div id="shareM" class="modal-bg" style="display:none" onclick="if(event.target===this)closeShare()">
+    <div class="modal" style="max-width:420px">
+      <h2>🔗 Create Share Link</h2>
+      <p id="shareFileName" style="color:var(--txt2);font-size:12px;word-break:break-all;margin-bottom:12px"></p>
+      <div class="fg"><label class="fl">Expire after (hours)</label><input type="number" id="shareHours" class="fi"
+          value="24" min="0" placeholder="0 = never expires"></div>
+      <div class="fg"><label class="fl">Password (optional)</label><input type="text" id="sharePwd" class="fi"
+          placeholder="Leave empty for no password"></div>
+      <div id="shareResult" style="display:none;margin:12px 0">
+        <label class="fl" style="margin-bottom:4px">Share URL</label>
+        <div style="display:flex;gap:6px"><input type="text" id="shareUrl" class="fi" readonly style="flex:1"><button
+            class="btn btn-p" style="padding:6px 12px" onclick="cpL(document.getElementById('shareUrl').value)">📋
+            Copy</button></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-s" onclick="closeShare()">Close</button>
+        <button class="btn btn-p" id="shareGoBtn" onclick="doShare()">🔗 Create</button>
+      </div>
+    </div>
+  </div>
 
-<div class="tw" id="toasts"></div>
+  <div class="tw" id="toasts"></div>
 
-<!-- Detail Panel (slide-in) -->
-<div class="detail-panel" id="detailPanel"></div>
+  <!-- Detail Panel (slide-in) -->
+  <div class="detail-panel" id="detailPanel"></div>
 
-<!-- Sidebar -->
-<aside class="sidebar">
-<div class="sb-logo"><div class="sb-logo-icon">⬇</div><span>Proxy Server</span></div>
-<nav class="sb-nav">
-<button class="sb-item active" onclick="go('dl',this)"><i>📥</i>Downloads</button>
-<button class="sb-item" onclick="go('fm',this)"><i>📁</i>File Manager</button>
-<button class="sb-item" onclick="go('media',this)"><i>🎬</i>Media</button>
-<button class="sb-item" onclick="go('trash',this)"><i>♻️</i>Recycle Bin <span class="sb-badge" id="trashBadge" style="display:none">0</span></button>
-<button class="sb-item" onclick="go('dedup',this)"><i>🔍</i>Deduplication</button>
-<button class="sb-item" onclick="go('share',this)"><i>🔗</i>Share Links</button>
-</nav>
-<div class="sb-foot">
-<div class="sb-disk">Disk Usage</div>
-<div class="sb-disk-bar"><div class="sb-disk-fill" id="diskBar" style="width:0"></div></div>
-<div class="sb-disk-txt"><span id="diskUsed">--</span><span id="diskTotal">--</span></div>
-</div>
-</aside>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sb-logo">
+      <div class="sb-logo-icon">⬇</div><span>Proxy Server</span>
+    </div>
+    <nav class="sb-nav">
+      <button class="sb-item active" onclick="go('dl',this)"><i>📥</i>Downloads</button>
+      <button class="sb-item" onclick="go('fm',this)"><i>📁</i>File Manager</button>
+      <button class="sb-item" onclick="go('media',this)"><i>🎬</i>Media</button>
+      <button class="sb-item" onclick="go('trash',this)"><i>♻️</i>Recycle Bin <span class="sb-badge" id="trashBadge"
+          style="display:none">0</span></button>
+      <button class="sb-item" onclick="go('dedup',this)"><i>🔍</i>Deduplication</button>
+      <button class="sb-item" onclick="go('share',this)"><i>🔗</i>Share Links</button>
+    </nav>
+    <div class="sb-foot">
+      <div class="sb-disk">Disk Usage</div>
+      <div class="sb-disk-bar">
+        <div class="sb-disk-fill" id="diskBar" style="width:0"></div>
+      </div>
+      <div class="sb-disk-txt"><span id="diskUsed">--</span><span id="diskTotal">--</span></div>
+    </div>
+  </aside>
 
-<!-- Main -->
-<div class="main">
-<header class="topbar">
-<div class="topbar-l"><div class="topbar-title" id="pageTitle">Downloads</div></div>
-<div class="topbar-r">
-<div id="userInfo" style="display:flex;align-items:center;gap:8px"></div>
-<div class="tb-badge"><div class="tb-dot" id="sDot"></div><span id="sTxt">...</span></div>
-</div>
-</header>
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-l">
+        <div class="topbar-title" id="pageTitle">Downloads</div>
+      </div>
+      <div class="topbar-r">
+        <div id="userInfo" style="display:flex;align-items:center;gap:8px"></div>
+        <div class="tb-badge">
+          <div class="tb-dot" id="sDot"></div><span id="sTxt">...</span>
+        </div>
+      </div>
+    </header>
 
-<div class="content">
+    <div class="content">
 
-<!-- ====== Downloads Page ====== -->
-<div id="p-dl" class="page active">
-<div class="stats">
-<div class="stat-card"><div class="stat-num" id="sAct">0</div><div class="stat-label">Active</div></div>
-<div class="stat-card"><div class="stat-num" id="sDone">0</div><div class="stat-label">Completed</div></div>
-<div class="stat-card"><div class="stat-num" id="sFiles">0</div><div class="stat-label">Files</div></div>
-<div class="stat-card"><div class="stat-num" id="sDisk">--</div><div class="stat-label">Free GB</div></div>
-</div>
-<div class="grid-2">
-<div class="card">
-<div class="card-h">📥 New Download</div>
-<div class="card-b">
-<div class="tabs"><button class="tab active" onclick="stab('url',this)">URL</button><button class="tab" onclick="stab('curl',this)">cURL</button></div>
-<div id="tab-url" class="tc active">
-<div class="fg"><label class="fl">URL(s) — one per line</label><textarea id="dlUrl" class="fa" style="min-height:60px" placeholder="https://example.com/file1.zip
+      <!-- ====== Downloads Page ====== -->
+      <div id="p-dl" class="page active">
+        <div class="stats">
+          <div class="stat-card">
+            <div class="stat-num" id="sAct">0</div>
+            <div class="stat-label">Active</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="sDone">0</div>
+            <div class="stat-label">Completed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="sFiles">0</div>
+            <div class="stat-label">Files</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="sDisk">--</div>
+            <div class="stat-label">Free GB</div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-h">📥 New Download</div>
+            <div class="card-b">
+              <div class="tabs"><button class="tab active" onclick="stab('url',this)">URL</button><button class="tab"
+                  onclick="stab('curl',this)">cURL</button></div>
+              <div id="tab-url" class="tc active">
+                <div class="fg"><label class="fl">URL(s) — one per line</label><textarea id="dlUrl" class="fa"
+                    style="min-height:60px" placeholder="https://example.com/file1.zip
 https://example.com/file2.zip"></textarea></div>
-<div class="fg"><label class="fl">Headers (JSON)</label><textarea id="dlH" class="fa" style="min-height:50px" placeholder='{"referer":"..."}'></textarea></div>
-<div class="fr"><div class="fg"><label class="fl">Filename</label><input type="text" id="dlFn" class="fi" placeholder="Auto (for single URL)"></div><div class="fg"><label class="fl">Engine</label><select id="dlEng" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div></div>
-<button class="btn btn-p" onclick="subUrl()" id="bUrl" style="width:auto;min-width:140px">⬇ Download</button>
-</div>
-<div id="tab-curl" class="tc">
-<div class="fg"><label class="fl">cURL Command(s)</label><textarea id="dlCurl" class="fa" style="min-height:140px;font-family:monospace;font-size:11px" placeholder="Paste one or more curl commands here.
+                <div class="fg"><label class="fl">Headers (JSON)</label><textarea id="dlH" class="fa"
+                    style="min-height:50px" placeholder='{"referer":"..."}'></textarea></div>
+                <div class="fr">
+                  <div class="fg"><label class="fl">Filename</label><input type="text" id="dlFn" class="fi"
+                      placeholder="Auto (for single URL)"></div>
+                  <div class="fg"><label class="fl">Engine</label><select id="dlEng" class="fs">
+                      <option value="auto">Auto</option>
+                      <option value="curl">curl (CF)</option>
+                      <option value="aria2c">aria2c</option>
+                    </select></div>
+                </div>
+                <button class="btn btn-p" onclick="subUrl()" id="bUrl" style="width:auto;min-width:140px">⬇
+                  Download</button>
+              </div>
+              <div id="tab-curl" class="tc">
+                <div class="fg"><label class="fl">cURL Command(s)</label><textarea id="dlCurl" class="fa"
+                    style="min-height:140px;font-family:monospace;font-size:11px" placeholder="Paste one or more curl commands here.
 
 curl 'https://example.com/file1.rar' \
   -H 'referer: https://...'
 curl 'https://example.com/file2.rar' \
-  -H 'referer: https://...'"></textarea><div class="fh">Chrome → Network → Copy as cURL · Supports multiple curl commands</div></div>
-<div class="fr"><div class="fg"><label class="fl">Engine</label><select id="dlCE" class="fs"><option value="auto">Auto</option><option value="curl">curl (CF)</option><option value="aria2c">aria2c</option></select></div><div class="fg" style="flex:2"><div id="curlInfo" style="font-size:12px;color:var(--txt3);line-height:28px"></div></div></div>
-<button class="btn btn-p" onclick="subCurl()" id="bCurl" style="width:auto;min-width:140px">⬇ Download</button>
-</div>
-</div></div>
-<div class="card">
-<div class="card-h"><span>📊 Downloads</span><div style="display:flex;gap:4px"><button class="btn-s" onclick="clearDone()">🧹 Clear</button><button class="btn-s" onclick="rAll()">↻</button></div></div>
-<div class="card-b" style="padding:8px;max-height:520px;overflow-y:auto">
-<div class="dl-list" id="dlList"><div class="empty"><span>📭</span>No downloads</div></div>
-</div></div>
-</div></div>
-
-<!-- ====== File Manager Page ====== -->
-<div id="p-fm" class="page">
-<!-- FM Header: breadcrumb + actions -->
-<div class="fm-header">
-<div class="fm-nav-bar">
-<button class="fm-nav-btn" onclick="fmGoUp()" title="Go up">⬆</button>
-<div class="fm-path" id="fmPath"><span class="fm-crumb current" onclick="fmGo('')">📁 /</span></div>
-</div>
-<div class="fm-actions-bar">
-<div class="fm-sel-info" id="fmSelInfo" style="display:none"><span id="fmSelCount">0</span> selected</div>
-<button class="btn-s" id="fmBulkCompress" style="display:none" onclick="fmBulkCompress()">🗜️</button>
-<button class="btn-d" id="fmBulkDel" style="display:none" onclick="fmBulkDel()">🗑</button>
-<div class="fm-divider" id="fmBulkDiv" style="display:none"></div>
-<input type="text" class="fm-search" id="fmSearch" placeholder="🔍 Filter..." oninput="fmFilter()">
-<select class="fm-sort-sel" id="fmSortSel" onchange="fmSortChange(this.value)">
-<option value="name">Name</option><option value="size">Size</option>
-<option value="date">Date</option><option value="type">Type</option>
-</select>
-<button class="btn-s" id="fmSortDirBtn" onclick="fmToggleSortDir()" title="Sort direction">↑</button>
-<div class="fm-divider"></div>
-<button class="btn-s" onclick="fmNewFile()" title="New file">📄+</button>
-<button class="btn-s" onclick="fmMkdir()" title="New folder">📁+</button>
-<button class="btn-s" onclick="document.getElementById('uploadFile').click()" title="Upload">📤</button>
-<button class="btn-s" id="fmViewBtn" onclick="fmToggleView()">☰</button>
-<button class="btn-s" onclick="rFiles()" title="Refresh">↻</button>
-</div>
-</div>
-<!-- Upload hidden input -->
-<input type="file" id="uploadFile" style="display:none" onchange="fmUpload(this.files)" multiple>
-<!-- Upload drop zone (overlay, only visible on drag) -->
-<div class="fm-drop-zone" id="uploadZone">
-<div class="fm-drop-inner">📤 Drop files here to upload</div>
-</div>
-<!-- File content -->
-<div class="fm-body" id="fmContent"></div>
-</div>
-
-<!-- ====== Media Page ====== -->
-<div id="p-media" class="page">
-<div class="vp-container" id="playerW" style="display:none">
-  <div class="player-container">
-
-    <div id="player-status-overlay" class="player-status-overlay hidden">
-      <div class="player-spinner"></div>
-      <p id="player-status-text">Đang xử lý video...</p>
-    </div>
-
-    <div id="resume-toast" class="resume-toast hidden">
-      <div class="toast-content">
-        <span>▶ Tiếp tục từ <strong id="resume-time"></strong>?</span>
+  -H 'referer: https://...'"></textarea>
+                  <div class="fh">Chrome → Network → Copy as cURL · Supports multiple curl commands</div>
+                </div>
+                <div class="fr">
+                  <div class="fg"><label class="fl">Engine</label><select id="dlCE" class="fs">
+                      <option value="auto">Auto</option>
+                      <option value="curl">curl (CF)</option>
+                      <option value="aria2c">aria2c</option>
+                    </select></div>
+                  <div class="fg" style="flex:2">
+                    <div id="curlInfo" style="font-size:12px;color:var(--txt3);line-height:28px"></div>
+                  </div>
+                </div>
+                <button class="btn btn-p" onclick="subCurl()" id="bCurl" style="width:auto;min-width:140px">⬇
+                  Download</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><span>📊 Downloads</span>
+              <div style="display:flex;gap:4px"><button class="btn-s" onclick="clearDone()">🧹 Clear</button><button
+                  class="btn-s" onclick="rAll()">↻</button></div>
+            </div>
+            <div class="card-b" style="padding:8px;max-height:520px;overflow-y:auto">
+              <div class="dl-list" id="dlList">
+                <div class="empty"><span>📭</span>No downloads</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="toast-actions">
-        <button id="btn-resume" class="btn-resume">Tiếp tục</button>
-        <button id="btn-restart" class="btn-restart">Xem lại</button>
+
+      <!-- ====== File Manager Page ====== -->
+      <div id="p-fm" class="page">
+        <!-- FM Header: breadcrumb + actions -->
+        <div class="fm-header">
+          <div class="fm-nav-bar">
+            <button class="fm-nav-btn" onclick="fmGoUp()" title="Go up">⬆</button>
+            <div class="fm-path" id="fmPath"><span class="fm-crumb current" onclick="fmGo('')">📁 /</span></div>
+          </div>
+          <div class="fm-actions-bar">
+            <div class="fm-sel-info" id="fmSelInfo" style="display:none"><span id="fmSelCount">0</span> selected</div>
+            <button class="btn-s" id="fmBulkCompress" style="display:none" onclick="fmBulkCompress()">🗜️</button>
+            <button class="btn-d" id="fmBulkDel" style="display:none" onclick="fmBulkDel()">🗑</button>
+            <div class="fm-divider" id="fmBulkDiv" style="display:none"></div>
+            <input type="text" class="fm-search" id="fmSearch" placeholder="🔍 Filter..." oninput="fmFilter()">
+            <select class="fm-sort-sel" id="fmSortSel" onchange="fmSortChange(this.value)">
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+              <option value="date">Date</option>
+              <option value="type">Type</option>
+            </select>
+            <button class="btn-s" id="fmSortDirBtn" onclick="fmToggleSortDir()" title="Sort direction">↑</button>
+            <div class="fm-divider"></div>
+            <button class="btn-s" onclick="fmNewFile()" title="New file">📄+</button>
+            <button class="btn-s" onclick="fmMkdir()" title="New folder">📁+</button>
+            <button class="btn-s" onclick="document.getElementById('uploadFile').click()" title="Upload">📤</button>
+            <button class="btn-s" id="fmViewBtn" onclick="fmToggleView()">☰</button>
+            <button class="btn-s" onclick="rFiles()" title="Refresh">↻</button>
+          </div>
+        </div>
+        <!-- Upload hidden input -->
+        <input type="file" id="uploadFile" style="display:none" onchange="fmUpload(this.files)" multiple>
+        <!-- Upload drop zone (overlay, only visible on drag) -->
+        <div class="fm-drop-zone" id="uploadZone">
+          <div class="fm-drop-inner">📤 Drop files here to upload</div>
+        </div>
+        <!-- File content -->
+        <div class="fm-body" id="fmContent"></div>
+      </div>
+
+      <!-- ====== Media Page ====== -->
+      <div id="p-media" class="page">
+        <div class="vp-container" id="playerW" style="display:none">
+          <div class="player-container">
+
+            <div id="player-status-overlay" class="player-status-overlay hidden">
+              <div class="player-spinner"></div>
+              <p id="player-status-text">Đang xử lý video...</p>
+            </div>
+
+            <div id="resume-toast" class="resume-toast hidden">
+              <div class="toast-content">
+                <span>▶ Tiếp tục từ <strong id="resume-time"></strong>?</span>
+              </div>
+              <div class="toast-actions">
+                <button id="btn-resume" class="btn-resume">Tiếp tục</button>
+                <button id="btn-restart" class="btn-restart">Xem lại</button>
+              </div>
+            </div>
+
+            <div id="pip-overlay" class="pip-overlay hidden">
+              <p>🎬 Đang phát trong cửa sổ nhỏ</p>
+              <button id="pip-return">Quay lại</button>
+            </div>
+
+            <video id="player" playsinline></video>
+
+          </div>
+        </div>
+        <div id="nowP" class="now-playing" style="display:none"></div>
+        <div class="card">
+          <div class="card-h"><span>🎬 Media Library</span><button class="btn-s" onclick="rMedia()">↻</button></div>
+          <div class="card-b" style="padding:10px">
+            <div class="mg" id="mediaList">
+              <div class="empty"><span>🎬</span>No media files</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====== Recycle Bin Page ====== -->
+      <div id="p-trash" class="page">
+        <div class="card">
+          <div class="card-h"><span>♻️ Recycle Bin</span>
+            <div><button class="btn-s" onclick="rTrash()">↻</button> <button class="btn-d" onclick="trashPurgeAll()">🗑
+                Empty Trash</button></div>
+          </div>
+          <div class="card-b" style="padding:0">
+            <div id="trashList">
+              <div class="empty"><span>♻️</span>Recycle bin is empty</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====== Deduplication Page ====== -->
+      <div id="p-dedup" class="page">
+        <div class="card">
+          <div class="card-h"><span>🔍 Deduplication</span><button class="btn-s" onclick="rDedup()">🔄 Scan</button>
+          </div>
+          <div class="card-b" id="dedupContent">
+            <div class="empty"><span>🔍</span>Click "Scan" to find duplicate files</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====== Share Links Page ====== -->
+      <div id="p-share" class="page">
+        <div class="card">
+          <div class="card-h"><span>🔗 Share Links</span><button class="btn-s" onclick="rShares()">↻</button></div>
+          <div class="card-b" style="padding:0">
+            <div id="shareList">
+              <div class="empty"><span>🔗</span>No share links yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Upload Progress Panel (floating) -->
+  <div id="uploadPanel" class="upl-panel" style="display:none">
+    <div class="upl-header">
+      <span class="upl-title">📤 Upload <span id="uplCount"></span></span>
+      <div class="upl-hdr-acts">
+        <button class="upl-hdr-btn" id="uplMinBtn" onclick="UPM.toggleMin()">▼</button>
+        <button class="upl-hdr-btn" onclick="UPM.close()">✕</button>
       </div>
     </div>
-
-    <div id="pip-overlay" class="pip-overlay hidden">
-      <p>🎬 Đang phát trong cửa sổ nhỏ</p>
-      <button id="pip-return">Quay lại</button>
-    </div>
-
-    <video id="player" playsinline></video>
-
-  </div>
-</div>
-<div id="nowP" class="now-playing" style="display:none"></div>
-<div class="card">
-<div class="card-h"><span>🎬 Media Library</span><button class="btn-s" onclick="rMedia()">↻</button></div>
-<div class="card-b" style="padding:10px">
-<div class="mg" id="mediaList"><div class="empty"><span>🎬</span>No media files</div></div>
-</div></div>
-</div>
-
-<!-- ====== Recycle Bin Page ====== -->
-<div id="p-trash" class="page">
-<div class="card">
-<div class="card-h"><span>♻️ Recycle Bin</span><div><button class="btn-s" onclick="rTrash()">↻</button> <button class="btn-d" onclick="trashPurgeAll()">🗑 Empty Trash</button></div></div>
-<div class="card-b" style="padding:0">
-<div id="trashList"><div class="empty"><span>♻️</span>Recycle bin is empty</div></div>
-</div></div>
-</div>
-
-<!-- ====== Deduplication Page ====== -->
-<div id="p-dedup" class="page">
-<div class="card">
-<div class="card-h"><span>🔍 Deduplication</span><button class="btn-s" onclick="rDedup()">🔄 Scan</button></div>
-<div class="card-b" id="dedupContent">
-<div class="empty"><span>🔍</span>Click "Scan" to find duplicate files</div>
-</div></div>
-</div>
-
-<!-- ====== Share Links Page ====== -->
-<div id="p-share" class="page">
-<div class="card">
-<div class="card-h"><span>🔗 Share Links</span><button class="btn-s" onclick="rShares()">↻</button></div>
-<div class="card-b" style="padding:0">
-<div id="shareList"><div class="empty"><span>🔗</span>No share links yet</div></div>
-</div></div>
-</div>
-
-</div></div>
-
-<!-- Upload Progress Panel (floating) -->
-<div id="uploadPanel" class="upl-panel" style="display:none">
-  <div class="upl-header">
-    <span class="upl-title">📤 Upload <span id="uplCount"></span></span>
-    <div class="upl-hdr-acts">
-      <button class="upl-hdr-btn" id="uplMinBtn" onclick="UPM.toggleMin()">▼</button>
-      <button class="upl-hdr-btn" onclick="UPM.close()">✕</button>
+    <div class="upl-body" id="uplBody">
+      <div class="upl-overall" id="uplOverall"></div>
+      <div class="upl-list" id="uplList"></div>
     </div>
   </div>
-  <div class="upl-body" id="uplBody">
-    <div class="upl-overall" id="uplOverall"></div>
-    <div class="upl-list" id="uplList"></div>
-  </div>
-</div>
 
-<script src="/static/js/hls.js"></script>
-<script src="/static/js/plyr.js"></script>
-<script src="/static/js/utils.js"></script>
-<script src="/static/js/player.js"></script>
-<script src="/static/app.js"></script>
+  <script src="/static/js/hls.js"></script>
+  <script src="/static/js/plyr.js"></script>
+  <script src="/static/js/utils.js"></script>
+  <script src="/static/js/player.js"></script>
+  <script src="/static/app.js"></script>
 </body>
+
 </html>

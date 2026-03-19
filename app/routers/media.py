@@ -177,35 +177,51 @@ async def stream(filename: str, request: Request):
 
 
 # --- Probe codec for browser compatibility + remux status ---
-BROWSER_VIDEO_CODECS = {"h264", "vp8", "vp9", "av1"}
+BROWSER_VIDEO_CODECS = {"h264", "vp8", "vp9", "av1", "avc", "theora"}
 BROWSER_CONTAINERS = {".mp4", ".webm", ".mov", ".m4v"}
+BROWSER_AUDIO_CODECS = {
+    "aac", "mp3", "mp3float",
+    "opus", "vorbis", "flac",
+    "pcm_s16le", "pcm_s24le", "pcm_u8",
+}
 
 @router.get("/api/media/probe/{filepath:path}")
 async def probe_compat(filepath: str, _=Depends(verify_key)):
-    """Check if video codec is browser-compatible. Returns duration and remux status."""
+    """Check if video/audio codecs are browser-compatible. Returns duration and remux status."""
     fp = DOWNLOAD_DIR / filepath
     if not fp.exists():
         raise HTTPException(404)
     try:
-        # Use the comprehensive check_needs_remux
+        # Use the comprehensive check_needs_remux (video + container check)
         check = await check_needs_remux(fp)
         remux = get_remux_status(fp)
 
-        codec = check.get("codec", "unknown")
+        # Get full media info (includes audio codec)
+        media_info = await get_media_info(fp)
+
+        video_codec = check.get("codec", "unknown")
+        audio_codec = media_info.get("audio_codec", "").lower()
         container = check.get("container", fp.suffix.lower())
         duration = check.get("duration", 0)
         needs_remux = check.get("needs_remux", False)
-        needs_transcode = check.get("needs_transcode", False)
 
         container_ok = container in BROWSER_CONTAINERS
-        codec_ok = codec in BROWSER_VIDEO_CODECS
+        video_ok = video_codec in BROWSER_VIDEO_CODECS
+        audio_ok = audio_codec in BROWSER_AUDIO_CODECS or audio_codec == ""
+
+        browser_compatible = container_ok and video_ok and audio_ok and not needs_remux
+        needs_transcode = check.get("needs_transcode", False) or (not video_ok) or (not audio_ok and audio_codec != "")
 
         return {
-            "needs_transcode": needs_transcode or (not container_ok and not codec_ok),
+            "needs_transcode": needs_transcode,
             "needs_remux": needs_remux,
-            "codec": codec,
+            "codec": video_codec,
+            "video_codec": video_codec,
+            "audio_codec": audio_codec,
             "container": container,
-            "browser_compatible": container_ok and codec_ok and not needs_remux,
+            "video_compatible": video_ok,
+            "audio_compatible": audio_ok,
+            "browser_compatible": browser_compatible,
             "duration": duration,
             "reason": check.get("reason", ""),
             "remux": remux,

@@ -5,3 +5,4 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
 chardet
+psutil>=5.9.0

@@ -1,6 +1,9 @@
 (function() {
   'use strict';
 
+  // Xóa Plyr localStorage cũ (nếu có) — không cho Plyr lưu settings
+  localStorage.removeItem('plyr');
+
   let plyrInstance  = null;
   let hlsInstance   = null;
   let currentPath   = null;
@@ -33,6 +36,12 @@
 
       // Inject <track> elements before Plyr init
       injectSubtitleTracks(subs);
+
+      // Detect Vietnamese subtitle for default language
+      var viTrack = subs.find(function(s) {
+        return s.language === 'vi' || s.language === 'vie';
+      });
+      window._defaultSubLang = viTrack ? 'vi' : null;
 
       if (statusData.status === 'ready') {
         // HLS đã sẵn sàng → dùng luôn (seek instant, nhẹ server)
@@ -94,6 +103,7 @@
     var plyrConfig = {
       controls: controls,
       settings: settings,
+      storage: { enabled: false, key: 'plyr' },
       speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
       quality: {
         default: 720,
@@ -131,8 +141,22 @@
         if (timeEl) timeEl.click();
       }, 100);
 
+      // Restore saved volume
+      restoreVolume();
+
+      // Set default subtitle language to 'vi' if available
+      if (window._defaultSubLang && plyrInstance.captions) {
+        plyrInstance.language = window._defaultSubLang;
+      }
+      window._defaultSubLang = null;
+
       initResumeProgress(currentPath);
       initTouchGestures();
+    });
+
+    // Save volume on change
+    plyrInstance.on('volumechange', function() {
+      saveVolume();
     });
 
     initProgressSaving(currentPath);
@@ -166,6 +190,7 @@
     var plyrConfig = {
       controls: controls,
       settings: settings,
+      storage: { enabled: false, key: 'plyr' },
       speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
       keyboard: { focused: true, global: true },
       tooltips: { controls: true, seek: true },
@@ -192,8 +217,22 @@
         if (timeEl) timeEl.click();
       }, 100);
 
+      // Restore saved volume
+      restoreVolume();
+
+      // Set default subtitle language to 'vi' if available
+      if (window._defaultSubLang && plyrInstance.captions) {
+        plyrInstance.language = window._defaultSubLang;
+      }
+      window._defaultSubLang = null;
+
       initResumeProgress(currentPath);
       initTouchGestures();
+    });
+
+    // Save volume on change
+    plyrInstance.on('volumechange', function() {
+      saveVolume();
     });
 
     initProgressSaving(currentPath);
@@ -380,21 +419,46 @@
   }
 
   function waitUntilReady(filePath) {
+    var strategyLabels = {
+      'copy':       'Copy stream',
+      'audio_only': 'Convert audio',
+      're-encode':  'Re-encode video',
+    };
+
     return new Promise(function(resolve) {
       var interval = setInterval(async function() {
         var data = await fetchHlsStatus(filePath);
 
-        // Cập nhật progress % nếu đang transcode
         if (data.status === 'transcoding' && data.progress) {
-          var pct = data.progress.percent || '';
-          showStatusOverlay('\u23f3 Đang xử lý video... ' + pct + '%');
+          var pct = data.progress.percent || 0;
+          var strategy = data.strategy || '';
+          var label = strategyLabels[strategy] || 'Converting';
+          var eta = data.eta_minutes || 0;
+          var elapsed = data.elapsed_minutes || 0;
+          var remaining = Math.max(0, Math.round(eta - elapsed));
+
+          var msg = '\u23f3 ' + label + '... ' + pct + '%';
+          if (remaining > 0) {
+            msg += '\nCòn khoảng ' + remaining + ' phút';
+          }
+          showStatusOverlay(msg);
+        }
+
+        if (data.status === 'queued') {
+          showStatusOverlay('\u23f3 Đang chờ server... (có video khác đang convert)');
+        }
+
+        if (data.status === 'error') {
+          clearInterval(interval);
+          showStatusOverlay('\u274c Convert thất bại. Thử stream trực tiếp...');
+          setTimeout(function() { resolve({ fallback: true }); }, 2000);
         }
 
         if (data.status === 'ready') {
           clearInterval(interval);
           resolve(data);
         }
-      }, 5000); // poll mỗi 5 giây
+      }, 5000);
     });
   }
 
@@ -408,16 +472,13 @@
         // Đang generate, thử lại sau 15 giây
         setTimeout(function() {
           if (plyrInstance) {
-            fetch(url, { headers: getAuthHeaders() }).then(function(r) {
-              if (r.ok) {
-                plyrInstance.previewThumbnails = { enabled: true, src: url };
-              }
-            }).catch(function() {});
+            plyrInstance.previewThumbnails.src = url;
+            plyrInstance.previewThumbnails.enabled = true;
           }
         }, 15000);
         return null;
       }
-      if (res.ok) return url;
+      if (res.ok) return url; // URL thẳng, không blob
       return null;
     } catch(e) { return null; }
   }
@@ -451,6 +512,27 @@
       track.src     = sub.src;
       videoEl.appendChild(track);
     });
+  }
+
+  // ─── VOLUME HELPERS ─────────────────────────────────────
+
+  function saveVolume() {
+    if (!plyrInstance) return;
+    localStorage.setItem('vp_vol', JSON.stringify({
+      volume: plyrInstance.volume,
+      muted: plyrInstance.muted
+    }));
+  }
+
+  function restoreVolume() {
+    if (!plyrInstance) return;
+    try {
+      var saved = JSON.parse(localStorage.getItem('vp_vol'));
+      if (saved) {
+        plyrInstance.volume = saved.volume;
+        plyrInstance.muted = saved.muted;
+      }
+    } catch(e) {}
   }
 
   // ─── HELPERS ─────────────────────────────────────────────

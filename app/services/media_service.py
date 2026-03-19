@@ -1,21 +1,69 @@
 """
 Media Service - media metadata extraction, subtitle handling, HLS transcoding
-FFmpeg/ffprobe based for 2-core CPU (no GPU)
+FFmpeg/ffprobe based, adaptive to server specs
 """
 import re
+import os
 import json
 import math
+import time
 import hashlib
 import asyncio
 from pathlib import Path
 from datetime import datetime
 
-from config import DOWNLOAD_DIR, HLS_DIR, REMUX_DIR, THUMBNAILS_DIR, VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, SERVER_URL, SYSTEM_DIRS, MAX_CONCURRENT_TRANSCODE
+from config import (
+    DOWNLOAD_DIR, HLS_DIR, REMUX_DIR, THUMBNAILS_DIR,
+    VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, SERVER_URL, SYSTEM_DIRS,
+    MAX_CONCURRENT_TRANSCODE, CPU_CORES,
+    FFMPEG_THREADS, FFMPEG_NICE, FFMPEG_PRESET,
+    ETA_COPY, ETA_AUDIO_ONLY, ETA_REENCODE,
+)
 
 transcode_semaphore: asyncio.Semaphore = None
 _active_transcodes: dict = {}
 
-# HLS profiles optimized for 2-core Xeon (software encoding only)
+# Video codecs that can be COPIED directly into HLS (H.264 only truly safe)
+COPY_VIDEO_CODECS = {'h264', 'avc', 'avc1'}
+
+# Video codecs that need RE-ENCODE to H.264
+REENCODE_VIDEO_CODECS = {
+    'hevc', 'h265', 'hvc1',        # H.265/HEVC
+    'av1',                          # AV1
+    'vp9', 'vp8',                   # WebM
+    'mpeg4', 'xvid', 'divx',       # DivX/Xvid
+    'mpeg2video', 'mpeg1video',    # DVD/broadcast
+    'wmv1', 'wmv2', 'wmv3',        # Windows Media
+    'vc1',                          # VC-1 (Blu-ray)
+    'theora',                       # Ogg/WebM legacy
+    'prores', 'dnxhd',             # Editing formats
+    'flv1', 'sorenson',            # FLV legacy
+    'rv40', 'rv30',                # RealMedia
+}
+
+# Audio codecs that can be COPIED
+COPY_AUDIO_CODECS = {'aac', 'mp3', 'mp3float', 'opus'}
+
+# Audio codecs that need RE-ENCODE to AAC
+REENCODE_AUDIO_CODECS = {
+    'eac3', 'ac3',                  # Dolby Digital/Plus
+    'dts', 'dca',                   # DTS
+    'truehd', 'mlp',               # Dolby TrueHD (Blu-ray)
+    'dtshd', 'dts-hd',            # DTS-HD Master Audio
+    'flac', 'alac',                # Lossless
+    'pcm_s16le', 'pcm_s24le',     # PCM (DVD)
+    'pcm_s32le', 'pcm_f32le',
+    'pcm_bluray', 'pcm_dvd',
+    'pcm_u8',
+    'wma', 'wmav1', 'wmav2',      # Windows Media Audio
+    'vorbis',                       # Ogg Vorbis
+    'mp2', 'mp2float',             # MPEG-1 Audio Layer 2
+    'amr_nb', 'amr_wb',           # Mobile audio
+    'aiff',                         # Apple AIFF
+    'ra_144', 'ra_288',            # RealAudio
+}
+
+# HLS profiles optimized per server tier
 HLS_PROFILES = [
     {"name": "480p", "height": 480, "bitrate": "1200k", "audio_br": "96k"},
     {"name": "720p", "height": 720, "bitrate": "2500k", "audio_br": "128k"},
@@ -26,6 +74,145 @@ HLS_PROFILES = [
 def init_transcode_semaphore():
     global transcode_semaphore
     transcode_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TRANSCODE)
+
+
+def determine_convert_strategy(media_info: dict) -> dict:
+    """Determine the optimal HLS conversion strategy based on codecs.
+    Handles all common container/codec combinations.
+    """
+    video_codec = media_info.get("video_codec", "").lower()
+    audio_codec = media_info.get("audio_codec", "").lower()
+    pix_fmt = media_info.get("pix_fmt", "yuv420p").lower()
+    duration = media_info.get("duration", 0)  # seconds
+
+    # Determine video action
+    if video_codec in COPY_VIDEO_CODECS:
+        video_action = 'copy'
+    else:
+        # Any codec not in COPY set needs re-encode (known or unknown)
+        video_action = 're-encode'
+
+    # Determine audio action
+    if audio_codec in COPY_AUDIO_CODECS:
+        audio_action = 'copy'
+    elif audio_codec == '':
+        audio_action = 'copy'  # no audio stream
+    else:
+        audio_action = 're-encode'
+
+    # Check for HDR (10-bit) content
+    is_hdr = '10le' in pix_fmt or '10be' in pix_fmt or 'p010' in pix_fmt
+
+    # Overall strategy
+    if video_action == 'copy' and audio_action == 'copy':
+        strategy = 'copy'
+        eta = duration / 60 * ETA_COPY
+    elif video_action == 'copy' and audio_action == 're-encode':
+        strategy = 'audio_only'
+        eta = duration / 60 * ETA_AUDIO_ONLY
+    else:
+        strategy = 're-encode'
+        multiplier = ETA_REENCODE.get(FFMPEG_PRESET, 0.35)
+        if is_hdr:
+            multiplier *= 1.3  # HDR tone mapping adds ~30% time
+        eta = duration / 60 * multiplier
+
+    return {
+        'strategy': strategy,
+        'eta_minutes': max(1, round(eta)),
+        'video_action': video_action,
+        'audio_action': audio_action,
+        'video_codec': video_codec,
+        'audio_codec': audio_codec,
+        'pix_fmt': pix_fmt,
+        'is_hdr': is_hdr,
+    }
+
+
+def build_hls_command(input_path: Path, output_dir: Path, strategy_info: dict,
+                      profile: dict = None) -> list:
+    """Build FFmpeg command for HLS conversion based on strategy.
+    Handles HDR tone mapping, all codec types, and adaptive presets.
+    """
+    cmd = []
+    if os.name != 'nt':
+        cmd += ['nice', '-n', str(FFMPEG_NICE)]
+
+    cmd += [
+        'ffmpeg', '-y',
+        '-threads', str(FFMPEG_THREADS),
+        '-i', str(input_path),
+        '-map', '0:v:0',     # first video stream only
+        '-map', '0:a:0?',    # first audio stream only
+        '-sn',               # strip subtitle streams
+        '-dn',               # strip data streams
+    ]
+
+    strategy = strategy_info['strategy']
+    is_hdr = strategy_info.get('is_hdr', False)
+
+    if strategy == 'copy':
+        cmd += ['-c:v', 'copy', '-c:a', 'copy']
+
+    elif strategy == 'audio_only':
+        cmd += [
+            '-c:v', 'copy',
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000',
+        ]
+
+    else:
+        # Full re-encode to H.264 + AAC
+        # Video filter chain
+        vf_parts = []
+
+        if is_hdr:
+            # HDR → SDR tone mapping for browser compatibility
+            vf_parts.append(
+                'zscale=t=linear:npl=100,format=gbrpf32le,'
+                'zscale=p=bt709,tonemap=tonemap=hable:desat=0,'
+                'zscale=t=bt709:m=bt709:r=tv,format=yuv420p'
+            )
+
+        if profile:
+            vf_parts.append(f"scale=-2:{profile['height']}")
+
+        encode_args = [
+            '-c:v', 'libx264',
+            '-preset', FFMPEG_PRESET,
+            '-crf', '23',
+            '-profile:v', 'high',
+            '-level', '4.0',
+        ]
+
+        if vf_parts:
+            encode_args += ['-vf', ','.join(vf_parts)]
+
+        if not is_hdr:
+            encode_args += ['-pix_fmt', 'yuv420p']
+
+        if profile:
+            encode_args += [
+                '-b:v', profile['bitrate'],
+                '-maxrate', profile['bitrate'],
+                '-bufsize', f"{int(profile['bitrate'].replace('k', ''))}k",
+            ]
+
+        encode_args += [
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-ar', '48000',
+        ]
+        cmd += encode_args
+
+    # HLS output args
+    cmd += [
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_list_size', '0',
+        '-hls_segment_filename', str(output_dir / 'seg_%04d.ts'),
+        '-hls_playlist_type', 'vod',
+        str(output_dir / 'index.m3u8'),
+    ]
+
+    return cmd
 
 
 async def get_media_info(filepath: Path) -> dict:
@@ -59,12 +246,15 @@ async def get_media_info(filepath: Path) -> dict:
 
         if video_streams:
             vs = video_streams[0]
+            pix_fmt = vs.get("pix_fmt", "yuv420p")
             info.update({
                 "video_codec": vs.get("codec_name", ""),
                 "width": int(vs.get("width", 0)),
                 "height": int(vs.get("height", 0)),
                 "resolution": f"{vs.get('width', '?')}x{vs.get('height', '?')}",
                 "fps": _parse_fps(vs.get("avg_frame_rate", "0/1")),
+                "pix_fmt": pix_fmt,
+                "is_hdr": '10le' in pix_fmt or '10be' in pix_fmt or 'p010' in pix_fmt,
             })
 
         if audio_streams:
@@ -259,7 +449,7 @@ def is_hls_ready(filepath: Path) -> bool:
 
 
 def get_hls_status(filepath: Path) -> dict:
-    """Get HLS transcoding status."""
+    """Get HLS transcoding status with strategy and ETA info."""
     vid_hash = _video_hash(filepath)
     hls_dir = HLS_DIR / vid_hash
 
@@ -271,13 +461,28 @@ def get_hls_status(filepath: Path) -> dict:
         }
 
     if vid_hash in _active_transcodes:
-        return {"status": "transcoding", "progress": _active_transcodes[vid_hash]}
+        info = _active_transcodes[vid_hash].copy()
+        started_at = info.get("started_at", 0)
+        elapsed_min = round((time.time() - started_at) / 60, 1) if started_at else 0
+
+        return {
+            "status": "transcoding",
+            "progress": {"percent": info.get("percent", 0), "profile": info.get("profile", "")},
+            "strategy": info.get("strategy", ""),
+            "eta_minutes": info.get("eta_minutes", 0),
+            "started_at": started_at,
+            "elapsed_minutes": elapsed_min,
+            "server_info": {
+                "cpu_cores": CPU_CORES,
+                "preset": FFMPEG_PRESET,
+            }
+        }
 
     return {"status": "not_started"}
 
 
 async def transcode_to_hls(filepath: Path) -> dict:
-    """Transcode video to HLS with multiple quality profiles."""
+    """Transcode video to HLS using smart strategy selection."""
     vid_hash = _video_hash(filepath)
     hls_dir = HLS_DIR / vid_hash
 
@@ -289,93 +494,148 @@ async def transcode_to_hls(filepath: Path) -> dict:
     if vid_hash in _active_transcodes:
         return {"status": "transcoding", "progress": _active_transcodes[vid_hash]}
 
-    # Get source info
+    # Check if at capacity
+    if transcode_semaphore and transcode_semaphore.locked() and MAX_CONCURRENT_TRANSCODE <= 1:
+        return {
+            "status": "queued",
+            "message": "Server đang convert video khác. Sẽ tự động bắt đầu khi có slot.",
+        }
+
+    # Get source info and determine strategy
     info = await get_media_info(filepath)
+    strategy_info = determine_convert_strategy(info)
     src_height = info.get("height", 1080)
 
-    # Filter profiles that are <= source resolution
-    profiles = [p for p in HLS_PROFILES if p["height"] <= src_height]
-    if not profiles:
-        profiles = [HLS_PROFILES[0]]  # At least 480p
+    # For copy/audio_only: single output (no multi-profile needed)
+    # For re-encode: multi-profile like before
+    if strategy_info['strategy'] == 're-encode':
+        profiles = [p for p in HLS_PROFILES if p["height"] <= src_height]
+        if not profiles:
+            profiles = [HLS_PROFILES[0]]
+    else:
+        profiles = None  # single output
 
-    _active_transcodes[vid_hash] = {"percent": 0, "profile": "starting"}
+    _active_transcodes[vid_hash] = {
+        "percent": 0,
+        "profile": "starting",
+        "strategy": strategy_info['strategy'],
+        "eta_minutes": strategy_info['eta_minutes'],
+        "started_at": time.time(),
+    }
 
     # Run in background with semaphore
-    asyncio.create_task(_do_hls_transcode(filepath, hls_dir, profiles, vid_hash, info))
+    asyncio.create_task(
+        _do_hls_transcode(filepath, hls_dir, profiles, vid_hash, info, strategy_info)
+    )
 
-    return {"status": "started", "profiles": [p["name"] for p in profiles]}
+    return {
+        "status": "started",
+        "strategy": strategy_info['strategy'],
+        "eta_minutes": strategy_info['eta_minutes'],
+        "profiles": [p["name"] for p in profiles] if profiles else ["original"],
+        "server_info": {
+            "cpu_cores": CPU_CORES,
+            "preset": FFMPEG_PRESET,
+            "nice_level": FFMPEG_NICE,
+            "max_concurrent": MAX_CONCURRENT_TRANSCODE,
+        }
+    }
 
 
-async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list, vid_hash: str, info: dict):
-    """Background HLS transcoding task."""
+async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
+                             vid_hash: str, info: dict, strategy_info: dict):
+    """Background HLS transcoding task with smart strategy."""
     async with transcode_semaphore:
         try:
             hls_dir.mkdir(parents=True, exist_ok=True)
             duration = info.get("duration", 0)
+            strategy = strategy_info['strategy']
 
-            for i, profile in enumerate(profiles):
-                pname = profile["name"]
-                pdir = hls_dir / pname
-                pdir.mkdir(exist_ok=True)
+            if strategy in ('copy', 'audio_only'):
+                # Single-pass: output directly to hls_dir
+                _active_transcodes[vid_hash].update({
+                    "percent": 0,
+                    "profile": "original",
+                })
 
-                _active_transcodes[vid_hash] = {
-                    "percent": int(i / len(profiles) * 100),
-                    "profile": pname
-                }
-
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-threads", "2",
-                    "-i", str(filepath),
-                    "-map", "0:v:0", "-map", "0:a:0?",
-                    "-c:v", "libx264",
-                    "-preset", "superfast",
-                    "-tune", "film",
-                    "-vf", f"scale=-2:{profile['height']}",
-                    "-b:v", profile["bitrate"],
-                    "-maxrate", profile["bitrate"],
-                    "-bufsize", f"{int(profile['bitrate'].replace('k',''))}k",
-                    "-c:a", "aac", "-b:a", profile["audio_br"],
-                    "-ac", "2",
-                    "-f", "hls",
-                    "-hls_time", "6",
-                    "-hls_list_size", "0",
-                    "-hls_segment_filename", str(pdir / "seg_%04d.ts"),
-                    "-hls_playlist_type", "vod",
-                    str(pdir / "index.m3u8")
-                ]
-
+                cmd = build_hls_command(filepath, hls_dir, strategy_info)
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
 
-                # Read stderr for progress
                 while True:
                     line = await proc.stderr.readline()
                     if not line:
                         break
                     dec = line.decode(errors="ignore")
-                    # Parse FFmpeg time progress
                     m = re.search(r'time=(\d+):(\d+):(\d+)', dec)
                     if m and duration > 0:
                         elapsed = int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3))
-                        profile_pct = min(99, int(elapsed / duration * 100))
-                        overall = int((i * 100 + profile_pct) / len(profiles))
-                        _active_transcodes[vid_hash] = {"percent": overall, "profile": pname}
+                        pct = min(99, int(elapsed / duration * 100))
+                        _active_transcodes[vid_hash]["percent"] = pct
 
                 await proc.wait()
                 if proc.returncode != 0:
-                    _active_transcodes[vid_hash] = {"percent": -1, "profile": pname, "error": "FFmpeg failed"}
+                    _active_transcodes[vid_hash] = {"percent": -1, "error": "FFmpeg failed", "strategy": strategy}
                     return
 
-            # Generate master playlist
-            _generate_master_playlist(hls_dir, profiles)
+                # Generate simple master playlist pointing to index.m3u8
+                _generate_single_master(hls_dir)
+
+            else:
+                # Multi-profile re-encode
+                for i, profile in enumerate(profiles):
+                    pname = profile["name"]
+                    pdir = hls_dir / pname
+                    pdir.mkdir(exist_ok=True)
+
+                    _active_transcodes[vid_hash].update({
+                        "percent": int(i / len(profiles) * 100),
+                        "profile": pname,
+                    })
+
+                    cmd = build_hls_command(filepath, pdir, strategy_info, profile)
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+
+                    while True:
+                        line = await proc.stderr.readline()
+                        if not line:
+                            break
+                        dec = line.decode(errors="ignore")
+                        m = re.search(r'time=(\d+):(\d+):(\d+)', dec)
+                        if m and duration > 0:
+                            elapsed = int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3))
+                            profile_pct = min(99, int(elapsed / duration * 100))
+                            overall = int((i * 100 + profile_pct) / len(profiles))
+                            _active_transcodes[vid_hash].update({"percent": overall, "profile": pname})
+
+                    await proc.wait()
+                    if proc.returncode != 0:
+                        _active_transcodes[vid_hash] = {"percent": -1, "profile": pname, "error": "FFmpeg failed", "strategy": strategy}
+                        return
+
+                # Generate multi-profile master playlist
+                _generate_master_playlist(hls_dir, profiles)
+
             _active_transcodes.pop(vid_hash, None)
 
         except Exception as e:
-            _active_transcodes[vid_hash] = {"percent": -1, "error": str(e)}
+            _active_transcodes[vid_hash] = {"percent": -1, "error": str(e), "strategy": strategy_info.get('strategy', '')}
+
+
+def _generate_single_master(hls_dir: Path):
+    """Generate a simple master.m3u8 pointing to single index.m3u8."""
+    content = "#EXTM3U\n#EXT-X-VERSION:3\n\n"
+    content += '#EXT-X-STREAM-INF:BANDWIDTH=5000000,NAME="original"\n'
+    content += "index.m3u8\n"
+    with open(hls_dir / "master.m3u8", "w") as f:
+        f.write(content)
 
 
 def _generate_master_playlist(hls_dir: Path, profiles: list):
