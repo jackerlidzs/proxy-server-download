@@ -101,31 +101,6 @@
 }
 .btn-restart:hover { background: rgba(255,255,255,0.2); }
 
-/* PiP overlay */
-.pip-overlay {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.82);
-  backdrop-filter: blur(6px);
-  color: #fff; z-index: 50; gap: 16px;
-  border-radius: 12px;
-  font-size: 15px;
-}
-.pip-overlay.hidden { display: none; }
-
-#pip-return {
-  padding: 8px 24px;
-  background: #E50914; color: #fff;
-  border: none; border-radius: 6px;
-  cursor: pointer; font-size: 14px; font-weight: 600;
-  transition: background 0.2s;
-}
-#pip-return:hover { background: #f40612; }
-
-/* PiP button in Plyr controls */
-.pip-control.plyr__control--pressed svg { color: #E50914; }
-.pip-control:hover { background: rgba(255,255,255,0.1) !important; }
 
 /* Phase 5: Seek flash */
 .seek-flash {
@@ -162,11 +137,31 @@
   width: 13px; height: 13px;
 }
 
-/* Volume slider */
-.plyr__volume { width: 80px; }
+/* Volume slider — rộng hơn */
+.plyr__volume {
+  min-width: 80px;
+  max-width: 120px;
+}
+
+/* Tăng khoảng cách giữa các control groups */
+.plyr__controls > * + * {
+  margin-left: 2px;
+}
+
+/* Time display rõ hơn */
+.plyr__time {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  min-width: 52px;
+  text-align: center;
+}
+
+/* Seek bar chiếm toàn bộ space còn lại */
+.plyr__progress {
+  flex: 1;
+}
 
 /* Mobile: ẩn bớt trên màn hình nhỏ */
 @media (max-width: 480px) {
   .plyr__volume         { display: none; }
-  .plyr__time--duration { display: none; }
 }

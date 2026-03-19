@@ -73,18 +73,23 @@
       videoEl.src = masterUrl;
     }
 
-    // Build controls: add 'captions' only if subtitles found
+    // Build controls: YouTube/Netflix style layout
     var controls = [
-      'play-large', 'play', 'rewind', 'fast-forward',
-      'progress', 'current-time', 'duration',
-      'mute', 'volume'
+      'play-large',
+      'play',
+      'progress',
+      'current-time',
+      'mute',
+      'volume',
+      'captions',
+      'settings',
+      'pip',
+      'fullscreen'
     ];
     var settings = ['speed', 'quality'];
     if (subs && subs.length > 0) {
-      controls.push('captions');
       settings.push('captions');
     }
-    controls.push('settings', 'fullscreen');
 
     var plyrConfig = {
       controls: controls,
@@ -102,8 +107,7 @@
       toggleInvert: true,
       hideControls: true,
       clickToPlay: true,
-      rewind: 10,
-      fastForward: 10,
+      ratio: '16:9',
     };
 
     // Thumbnail preview — check if ready, retry if generating
@@ -121,8 +125,13 @@
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
+      // Force invertTime — HLS attaches before Plyr, config may not apply
+      setTimeout(function() {
+        var timeEl = document.querySelector('.plyr__time--current');
+        if (timeEl) timeEl.click();
+      }, 100);
+
       initResumeProgress(currentPath);
-      initPiP();
       initTouchGestures();
     });
 
@@ -136,18 +145,23 @@
     // Dùng src trực tiếp, không qua HLS.js
     videoEl.src = streamUrl;
 
-    // Build controls: add 'captions' only if subtitles found
+    // Build controls: YouTube/Netflix style layout
     var controls = [
-      'play-large', 'play', 'rewind', 'fast-forward',
-      'progress', 'current-time', 'duration',
-      'mute', 'volume'
+      'play-large',
+      'play',
+      'progress',
+      'current-time',
+      'mute',
+      'volume',
+      'captions',
+      'settings',
+      'pip',
+      'fullscreen'
     ];
     var settings = ['speed'];
     if (subs && subs.length > 0) {
-      controls.push('captions');
       settings.push('captions');
     }
-    controls.push('settings', 'fullscreen');
 
     var plyrConfig = {
       controls: controls,
@@ -159,8 +173,7 @@
       toggleInvert: true,
       hideControls: true,
       clickToPlay: true,
-      rewind: 10,
-      fastForward: 10,
+      ratio: '16:9',
       // NO previewThumbnails — direct stream may be transcoding, avoid CPU contention
     };
 
@@ -173,8 +186,13 @@
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
+      // Force invertTime — config may not apply on direct stream
+      setTimeout(function() {
+        var timeEl = document.querySelector('.plyr__time--current');
+        if (timeEl) timeEl.click();
+      }, 100);
+
       initResumeProgress(currentPath);
-      initPiP();
       initTouchGestures();
     });
 
@@ -182,15 +200,6 @@
   }
 
   function destroyPlayer() {
-    // Thoát PiP nếu đang active
-    if (document.pictureInPictureElement) {
-      document.exitPictureInPicture().catch(function(){});
-    }
-    var pipOverlay = document.getElementById('pip-overlay');
-    if (pipOverlay) pipOverlay.classList.add('hidden');
-    var pipBtn = document.getElementById('pip-btn');
-    if (pipBtn) pipBtn.remove();
-
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
     var videoEl = document.getElementById('player');
@@ -274,76 +283,6 @@
       toast.classList.add('hidden');
       toast.classList.remove('toast-hiding');
     }, 250);
-  }
-
-  // ─── PICTURE IN PICTURE ───────────────────────────────
-
-  function initPiP() {
-    if (!document.pictureInPictureEnabled) return;
-    if (!plyrInstance) return;
-
-    var video = plyrInstance.media;
-
-    // Tạo nút PiP
-    var pipBtn = document.createElement('button');
-    pipBtn.type = 'button';
-    pipBtn.id   = 'pip-btn';
-    pipBtn.className = 'plyr__controls__item plyr__control pip-control';
-    pipBtn.setAttribute('aria-label', 'Picture in Picture');
-    pipBtn.setAttribute('title', 'Picture in Picture');
-    pipBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg"' +
-      ' viewBox="0 0 24 24" width="18" height="18" fill="currentColor">' +
-      '<path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18' +
-      'c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z' +
-      'm-10-7h9v6h-9z"/>' +
-      '</svg>';
-
-    // Inject trước nút fullscreen
-    var fullscreenBtn = document.querySelector(
-      '.plyr__controls [data-plyr="fullscreen"]'
-    );
-    if (fullscreenBtn) {
-      fullscreenBtn.parentNode.insertBefore(pipBtn, fullscreenBtn);
-    } else {
-      var controls = document.querySelector('.plyr__controls');
-      if (controls) controls.appendChild(pipBtn);
-    }
-
-    // Toggle PiP khi click
-    pipBtn.addEventListener('click', async function() {
-      try {
-        if (document.pictureInPictureElement) {
-          await document.exitPictureInPicture();
-        } else {
-          await video.requestPictureInPicture();
-        }
-      } catch(err) {
-        console.warn('PiP error:', err);
-      }
-    });
-
-    // Enter PiP
-    video.addEventListener('enterpictureinpicture', function() {
-      pipBtn.classList.add('plyr__control--pressed');
-      var overlay = document.getElementById('pip-overlay');
-      if (overlay) overlay.classList.remove('hidden');
-    });
-
-    // Leave PiP
-    video.addEventListener('leavepictureinpicture', function() {
-      pipBtn.classList.remove('plyr__control--pressed');
-      var overlay = document.getElementById('pip-overlay');
-      if (overlay) overlay.classList.add('hidden');
-    });
-
-    // Nút "Quay lại" trong overlay
-    var pipReturn = document.getElementById('pip-return');
-    if (pipReturn) {
-      pipReturn.addEventListener('click', function() {
-        document.exitPictureInPicture();
-      });
-    }
   }
 
   // ─── MOBILE TOUCH GESTURES ─────────────────────────────
