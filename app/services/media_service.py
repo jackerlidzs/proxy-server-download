@@ -4,12 +4,13 @@ FFmpeg/ffprobe based for 2-core CPU (no GPU)
 """
 import re
 import json
+import math
 import hashlib
 import asyncio
 from pathlib import Path
 from datetime import datetime
 
-from config import DOWNLOAD_DIR, HLS_DIR, REMUX_DIR, VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, SERVER_URL, SYSTEM_DIRS, MAX_CONCURRENT_TRANSCODE
+from config import DOWNLOAD_DIR, HLS_DIR, REMUX_DIR, THUMBNAILS_DIR, VIDEO_EXTS, AUDIO_EXTS, SUBTITLE_EXTS, SERVER_URL, SYSTEM_DIRS, MAX_CONCURRENT_TRANSCODE
 
 transcode_semaphore: asyncio.Semaphore = None
 _active_transcodes: dict = {}
@@ -607,3 +608,198 @@ async def cleanup_remux(filepath: Path):
     if remux_path.exists():
         remux_path.unlink()
 
+
+# ===== Sprite Thumbnails for Seek Preview =====
+
+async def generate_sprite_thumbnails(filepath: Path):
+    """Generate sprite sheet + VTT for Plyr seek preview thumbnails.
+    Returns (vtt_path, sprite_dir) or None on failure.
+    Uses dynamic tile sizing based on video duration.
+    """
+    vid_hash = _video_hash(filepath)
+    thumb_dir = THUMBNAILS_DIR / vid_hash
+    sprite_path = thumb_dir / "sprite.jpg"
+    vtt_path = thumb_dir / "thumbnails.vtt"
+
+    # Already generated
+    if vtt_path.exists() and sprite_path.exists():
+        return (vtt_path, thumb_dir)
+
+    # Get duration
+    duration = await quick_probe_duration(filepath)
+    if duration <= 0:
+        return None
+
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    # Dynamic tile sizing
+    interval = 10  # 1 frame every 10 seconds
+    total_frames = math.ceil(duration / interval)
+    if total_frames <= 0:
+        return None
+    cols = 10
+    rows = math.ceil(total_frames / cols)
+    thumb_w, thumb_h = 160, 90
+
+    # Generate sprite sheet with ffmpeg
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", str(filepath),
+            "-vf", f"fps=1/{interval},scale={thumb_w}:{thumb_h},tile={cols}x{rows}",
+            "-frames:v", "1",
+            "-q:v", "5",
+            str(sprite_path)
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=120)
+
+        if proc.returncode != 0 or not sprite_path.exists():
+            return None
+    except Exception:
+        return None
+
+    # Generate VTT file
+    try:
+        # Sprite URL relative to /thumbnails mount
+        sprite_url = f"/thumbnails/{vid_hash}/sprite.jpg"
+        lines = ["WEBVTT", ""]
+
+        for i in range(total_frames):
+            start_sec = i * interval
+            end_sec = min((i + 1) * interval, duration)
+
+            col = i % cols
+            row = i // cols
+            x = col * thumb_w
+            y = row * thumb_h
+
+            start_ts = _seconds_to_vtt_time(start_sec)
+            end_ts = _seconds_to_vtt_time(end_sec)
+
+            lines.append(f"{start_ts} --> {end_ts}")
+            lines.append(f"{sprite_url}#xywh={x},{y},{thumb_w},{thumb_h}")
+            lines.append("")
+
+        vtt_path.write_text("\n".join(lines), encoding="utf-8")
+        return (vtt_path, thumb_dir)
+    except Exception:
+        return None
+
+
+def _seconds_to_vtt_time(sec: float) -> str:
+    """Convert seconds to VTT timestamp HH:MM:SS.mmm"""
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int((sec % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def get_thumbnail_dir(filepath: Path) -> Path:
+    """Get thumbnail cache directory for a video."""
+    return THUMBNAILS_DIR / _video_hash(filepath)
+
+
+# ===== Subtitle Scanning & Conversion =====
+
+def scan_subtitles(filepath: Path) -> list:
+    """Scan for external subtitle files (.srt, .vtt) matching the video filename.
+    Returns list of {label, language, src}.
+    """
+    SUPPORTED_SUB_EXTS = {".srt", ".vtt"}
+    video_stem = filepath.stem.lower()
+    parent = filepath.parent
+    results = []
+
+    if not parent.exists():
+        return results
+
+    for f in parent.iterdir():
+        if not f.is_file():
+            continue
+        ext = f.suffix.lower()
+        if ext not in SUPPORTED_SUB_EXTS:
+            continue
+
+        # Match: video.srt, video.en.srt, video.vi.srt etc.
+        sub_stem = f.stem.lower()
+        if not sub_stem.startswith(video_stem):
+            continue
+
+        # Parse language from filename
+        remainder = sub_stem[len(video_stem):]
+        if remainder.startswith("."):
+            lang = remainder[1:]  # e.g. ".vi" → "vi"
+        elif remainder == "":
+            lang = "und"  # undefined
+        else:
+            continue  # not a match (e.g. "video2.srt" for "video.mp4")
+
+        # Create label from language code
+        lang_labels = {
+            "vi": "Tiếng Việt", "en": "English", "ja": "日本語",
+            "ko": "한국어", "zh": "中文", "fr": "Français",
+            "de": "Deutsch", "es": "Español", "pt": "Português",
+            "th": "ไทย", "und": "Subtitle",
+        }
+        label = lang_labels.get(lang, lang.upper())
+
+        # Build serve URL via subtitle-file endpoint
+        rel_path = str(f.relative_to(DOWNLOAD_DIR)).replace("\\", "/")
+        src = f"/api/media/subtitle-file/{rel_path}"
+
+        results.append({
+            "label": label,
+            "language": lang,
+            "src": src,
+        })
+
+    # Sort: defined languages first
+    results.sort(key=lambda x: (x["language"] == "und", x["language"]))
+    return results
+
+
+def srt_to_vtt_content(raw_bytes: bytes) -> str:
+    """Convert SRT subtitle content to WebVTT format.
+    Handles utf-8 with fallback to latin-1 encoding.
+    """
+    # Decode with fallback
+    try:
+        content = raw_bytes.decode("utf-8-sig")  # handles BOM
+    except UnicodeDecodeError:
+        content = raw_bytes.decode("latin-1")
+
+    lines = content.replace("\r\n", "\n").split("\n")
+    vtt_lines = ["WEBVTT", ""]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Skip cue numbers (pure digits)
+        if line.isdigit():
+            i += 1
+            continue
+
+        # Fix timestamp separators: "," → "."
+        if "-->" in line:
+            line = line.replace(",", ".")
+            vtt_lines.append(line)
+            i += 1
+            continue
+
+        # Empty line = cue separator
+        if line == "":
+            vtt_lines.append("")
+            i += 1
+            continue
+
+        # Subtitle text
+        vtt_lines.append(line)
+        i += 1
+
+    return "\n".join(vtt_lines)

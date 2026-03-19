@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import DOWNLOAD_DIR, TRASH_DIR, VERSIONS_DIR, HLS_DIR, CLEANUP_HOURS, TEMP_DIR
+from config import DOWNLOAD_DIR, TRASH_DIR, VERSIONS_DIR, HLS_DIR, CLEANUP_HOURS, TEMP_DIR, THUMBNAILS_DIR
 from database import get_db, close_db
 from services.download_service import init_semaphore
 from services.extract_service import init_extract_semaphore
@@ -76,6 +76,7 @@ async def lifespan(app):
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     HLS_DIR.mkdir(parents=True, exist_ok=True)
+    THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Initialize database
@@ -112,10 +113,12 @@ app.include_router(share_router)
 # Ensure directories exist before mounting
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 HLS_DIR.mkdir(parents=True, exist_ok=True)
+THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Mount static files (CSS, JS) and HLS segments
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/hls", StaticFiles(directory=str(HLS_DIR)), name="hls")
+app.mount("/thumbnails", StaticFiles(directory=str(THUMBNAILS_DIR)), name="thumbnails")
 
 
 @app.get("/", include_in_schema=False)

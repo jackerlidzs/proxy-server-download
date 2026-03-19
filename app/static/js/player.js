@@ -26,25 +26,22 @@
         nowP.textContent = '🎬 ' + (fileName || filePath);
       }
 
-      // Check HLS status
+      // Fetch subtitles + HLS status in parallel
+      var subsPromise = fetchSubtitles(filePath);
       var statusData = await fetchHlsStatus(filePath);
+      var subs = await subsPromise;
+
+      // Inject <track> elements before Plyr init
+      injectSubtitleTracks(subs);
 
       if (statusData.status === 'ready') {
         // HLS đã sẵn sàng → dùng luôn (seek instant, nhẹ server)
-        loadPlayer(filePath, statusData.master_url);
+        loadPlayer(filePath, statusData.master_url, subs);
 
       } else {
         // HLS chưa có → play NGAY qua URL đã được probe
-        // fallbackStreamUrl = /stream/ (nếu codec tương thích) hoặc /stream-transcode/
         var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
-        loadPlayerDirect(filePath, directUrl);
-
-        // Auto HLS convert disabled — server chỉ có 2 CPU core,
-        // ffmpeg ngầm gây lag stream. User dùng nút "Create HLS" thủ công.
-        // if (statusData.status === 'not_started') {
-        //   triggerHlsConvert(filePath);
-        // }
-        // Không cần waitUntilReady — lần sau mở lại sẽ dùng HLS
+        loadPlayerDirect(filePath, directUrl, subs);
       }
     },
 
@@ -60,7 +57,7 @@
 
   // ─── CORE PLAYER ─────────────────────────────────────────
 
-  function loadPlayer(filePath, masterUrl) {
+  async function loadPlayer(filePath, masterUrl, subs) {
     var videoEl = document.getElementById('player');
     if (!videoEl) return;
 
@@ -76,30 +73,51 @@
       videoEl.src = masterUrl;
     }
 
-    plyrInstance = new Plyr('#player', {
-      controls: [
-        'play-large', 'play', 'rewind', 'fast-forward',
-        'progress', 'current-time', 'duration',
-        'mute', 'volume', 'settings', 'fullscreen'
-      ],
-      settings: ['speed', 'quality'],
+    // Build controls: add 'captions' only if subtitles found
+    var controls = [
+      'play-large', 'play', 'rewind', 'fast-forward',
+      'progress', 'current-time', 'duration',
+      'mute', 'volume'
+    ];
+    var settings = ['speed', 'quality'];
+    if (subs && subs.length > 0) {
+      controls.push('captions');
+      settings.push('captions');
+    }
+    controls.push('settings', 'fullscreen');
+
+    var plyrConfig = {
+      controls: controls,
+      settings: settings,
       speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
       quality: {
         default: 720,
         options: [1080, 720, 480],
         forced: true,
-        onChange: function(q) {
-          // hls.js handle quality switching tự động
-        }
+        onChange: function(q) {}
       },
       keyboard: { focused: true, global: true },
       tooltips: { controls: true, seek: true },
+      invertTime: true,
+      toggleInvert: true,
       hideControls: true,
       clickToPlay: true,
       rewind: 10,
       fastForward: 10,
-    });
+    };
 
+    // Thumbnail preview — check if ready, retry if generating
+    var thumbSrc = await getThumbnailSrc(filePath);
+    if (thumbSrc) {
+      plyrConfig.previewThumbnails = { enabled: true, src: thumbSrc };
+    }
+
+    // Captions config if subs available
+    if (subs && subs.length > 0) {
+      plyrConfig.captions = { active: false, language: 'auto', update: true };
+    }
+
+    plyrInstance = new Plyr('#player', plyrConfig);
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
@@ -111,29 +129,47 @@
     initProgressSaving(currentPath);
   }
 
-  function loadPlayerDirect(filePath, streamUrl) {
+  function loadPlayerDirect(filePath, streamUrl, subs) {
     var videoEl = document.getElementById('player');
     if (!videoEl) return;
 
     // Dùng src trực tiếp, không qua HLS.js
     videoEl.src = streamUrl;
 
-    plyrInstance = new Plyr('#player', {
-      controls: [
-        'play-large', 'play', 'rewind', 'fast-forward',
-        'progress', 'current-time', 'duration',
-        'mute', 'volume', 'settings', 'fullscreen'
-      ],
-      settings: ['speed'],
+    // Build controls: add 'captions' only if subtitles found
+    var controls = [
+      'play-large', 'play', 'rewind', 'fast-forward',
+      'progress', 'current-time', 'duration',
+      'mute', 'volume'
+    ];
+    var settings = ['speed'];
+    if (subs && subs.length > 0) {
+      controls.push('captions');
+      settings.push('captions');
+    }
+    controls.push('settings', 'fullscreen');
+
+    var plyrConfig = {
+      controls: controls,
+      settings: settings,
       speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
       keyboard: { focused: true, global: true },
       tooltips: { controls: true, seek: true },
+      invertTime: true,
+      toggleInvert: true,
       hideControls: true,
       clickToPlay: true,
       rewind: 10,
       fastForward: 10,
-    });
+      // NO previewThumbnails — direct stream may be transcoding, avoid CPU contention
+    };
 
+    // Captions config if subs available
+    if (subs && subs.length > 0) {
+      plyrConfig.captions = { active: false, language: 'auto', update: true };
+    }
+
+    plyrInstance = new Plyr('#player', plyrConfig);
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
@@ -159,6 +195,8 @@
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
     var videoEl = document.getElementById('player');
     if (videoEl) {
+      // Remove subtitle tracks from previous session
+      Array.from(videoEl.querySelectorAll('track')).forEach(function(t) { t.remove(); });
       videoEl.removeAttribute('src');
       videoEl.load();
     }
@@ -418,6 +456,61 @@
           resolve(data);
         }
       }, 5000); // poll mỗi 5 giây
+    });
+  }
+
+  // ─── THUMBNAIL HELPERS ──────────────────────────────────
+
+  async function getThumbnailSrc(filePath) {
+    var url = '/api/media/thumbnails/' + encodeFilePath(filePath);
+    try {
+      var res = await fetch(url, { headers: getAuthHeaders() });
+      if (res.status === 202) {
+        // Đang generate, thử lại sau 15 giây
+        setTimeout(function() {
+          if (plyrInstance) {
+            fetch(url, { headers: getAuthHeaders() }).then(function(r) {
+              if (r.ok) {
+                plyrInstance.previewThumbnails = { enabled: true, src: url };
+              }
+            }).catch(function() {});
+          }
+        }, 15000);
+        return null;
+      }
+      if (res.ok) return url;
+      return null;
+    } catch(e) { return null; }
+  }
+
+  // ─── SUBTITLE HELPERS ────────────────────────────────────
+
+  async function fetchSubtitles(filePath) {
+    try {
+      var res = await fetch('/api/media/subtitles/' + encodeFilePath(filePath), {
+        headers: getAuthHeaders()
+      });
+      if (!res.ok) return [];
+      var subs = await res.json();
+      // Validate: only keep entries with a valid src
+      if (!Array.isArray(subs)) return [];
+      return subs.filter(function(s) {
+        return s && s.src && s.label;
+      });
+    } catch(e) { return []; }
+  }
+
+  function injectSubtitleTracks(subs) {
+    var videoEl = document.getElementById('player');
+    if (!videoEl || !subs || subs.length === 0) return;
+
+    subs.forEach(function(sub) {
+      var track = document.createElement('track');
+      track.kind    = 'subtitles';
+      track.label   = sub.label;
+      track.srclang = sub.language || 'und';
+      track.src     = sub.src;
+      videoEl.appendChild(track);
     });
   }
 

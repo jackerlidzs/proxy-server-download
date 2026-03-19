@@ -10,7 +10,9 @@ from config import DOWNLOAD_DIR, VIDEO_EXTS
 from services.media_service import (
     list_media, get_media_info, generate_thumbnail, extract_subtitles,
     convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls,
-    get_remux_status, check_needs_remux, remux_to_mp4, cleanup_remux
+    get_remux_status, check_needs_remux, remux_to_mp4, cleanup_remux,
+    generate_sprite_thumbnails, get_thumbnail_dir,
+    scan_subtitles, srt_to_vtt_content
 )
 
 router = APIRouter(tags=["media"])
@@ -301,4 +303,66 @@ async def api_remux_cleanup(filepath: str, _=Depends(verify_key)):
         raise HTTPException(404)
     await cleanup_remux(fp)
     return {"message": "Remux cache removed"}
+
+
+# --- Seek Preview Thumbnails ---
+@router.get("/api/media/thumbnails/{filepath:path}")
+async def api_thumbnails(filepath: str, _=Depends(verify_key)):
+    """Get VTT file for Plyr seek preview thumbnails.
+    Returns VTT if already generated, 202 if generating, 404 on error."""
+    import asyncio
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+
+    thumb_dir = get_thumbnail_dir(fp)
+    vtt_path = thumb_dir / "thumbnails.vtt"
+
+    # Already generated → serve VTT
+    if vtt_path.exists():
+        from fastapi.responses import Response
+        content = vtt_path.read_text(encoding="utf-8")
+        return Response(content=content, media_type="text/vtt")
+
+    # Trigger generation in background
+    asyncio.create_task(generate_sprite_thumbnails(fp))
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202,
+        content={"status": "generating", "message": "Thumbnail sprites are being generated"}
+    )
+
+
+# --- Subtitle Endpoints ---
+@router.get("/api/media/subtitles/{filepath:path}")
+async def api_subtitles(filepath: str, _=Depends(verify_key)):
+    """List available external subtitle files for a video."""
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+    subs = scan_subtitles(fp)
+    return subs
+
+
+@router.get("/api/media/subtitle-file/{filepath:path}")
+async def api_subtitle_file(filepath: str, _=Depends(verify_key)):
+    """Serve a subtitle file. SRT files are converted to VTT on-the-fly."""
+    fp = DOWNLOAD_DIR / filepath
+    if not fp.exists():
+        raise HTTPException(404)
+
+    ext = fp.suffix.lower()
+
+    if ext == ".vtt":
+        from fastapi.responses import FileResponse
+        return FileResponse(str(fp), media_type="text/vtt")
+
+    if ext == ".srt":
+        # Convert SRT to VTT on-the-fly
+        raw = fp.read_bytes()
+        vtt_content = srt_to_vtt_content(raw)
+        from fastapi.responses import Response
+        return Response(content=vtt_content, media_type="text/vtt")
+
+    raise HTTPException(400, "Unsupported subtitle format")
 
