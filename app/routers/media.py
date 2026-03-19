@@ -12,7 +12,7 @@ from services.media_service import (
     convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls,
     get_remux_status, check_needs_remux, remux_to_mp4, cleanup_remux,
     generate_sprite_thumbnails, get_thumbnail_dir,
-    scan_subtitles, srt_to_vtt_content
+    scan_subtitles, scan_subtitles_with_embedded, srt_to_vtt_content
 )
 
 router = APIRouter(tags=["media"])
@@ -333,14 +333,13 @@ async def api_thumbnails(filepath: str, _=Depends(verify_key)):
     )
 
 
-# --- Subtitle Endpoints ---
 @router.get("/api/media/subtitles/{filepath:path}")
 async def api_subtitles(filepath: str, _=Depends(verify_key)):
-    """List available external subtitle files for a video."""
+    """List available subtitle files for a video (external + embedded)."""
     fp = DOWNLOAD_DIR / filepath
     if not fp.exists():
         raise HTTPException(404)
-    subs = scan_subtitles(fp)
+    subs = await scan_subtitles_with_embedded(fp)
     return subs
 
 
@@ -365,4 +364,27 @@ async def api_subtitle_file(filepath: str, _=Depends(verify_key)):
         return Response(content=vtt_content, media_type="text/vtt")
 
     raise HTTPException(400, "Unsupported subtitle format")
+
+
+@router.get("/api/media/subtitle-file-cached/{cache_hash}/{filename}")
+async def api_cached_subtitle(cache_hash: str, filename: str, _=Depends(verify_key)):
+    """Serve cached extracted subtitle (embedded tracks)."""
+    from config import THUMBNAILS_DIR
+    from fastapi.responses import FileResponse
+
+    cache_dir = THUMBNAILS_DIR / "subs" / cache_hash
+    file_path = cache_dir / filename
+
+    # Validate path (prevent path traversal)
+    if not str(file_path.resolve()).startswith(str(THUMBNAILS_DIR.resolve())):
+        raise HTTPException(403, "Forbidden")
+
+    if not file_path.exists():
+        raise HTTPException(404, "Subtitle not found")
+
+    return FileResponse(
+        str(file_path),
+        media_type="text/vtt",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
 

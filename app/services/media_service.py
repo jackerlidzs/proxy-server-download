@@ -706,6 +706,167 @@ def get_thumbnail_dir(filepath: Path) -> Path:
 
 # ===== Subtitle Scanning & Conversion =====
 
+LANGUAGE_LABELS = {
+    'vie': 'Tiếng Việt', 'vi': 'Tiếng Việt',
+    'eng': 'English',    'en': 'English',
+    'zho': '中文',        'zh': '中文',
+    'chi': '中文',
+    'ara': 'العربية',    'ar': 'العربية',
+    'cat': 'Català',     'ca': 'Català',
+    'ces': 'Čeština',    'cs': 'Čeština',
+    'dan': 'Dansk',      'da': 'Dansk',
+    'deu': 'Deutsch',    'de': 'Deutsch',
+    'spa': 'Español',    'es': 'Español',
+    'fra': 'Français',   'fr': 'Français',
+    'ita': 'Italiano',   'it': 'Italiano',
+    'jpn': '日本語',      'ja': '日本語',
+    'kor': '한국어',      'ko': '한국어',
+    'nld': 'Nederlands', 'nl': 'Nederlands',
+    'nor': 'Norsk',      'no': 'Norsk',
+    'por': 'Português',  'pt': 'Português',
+    'ron': 'Română',     'ro': 'Română',
+    'rus': 'Русский',    'ru': 'Русский',
+    'swe': 'Svenska',    'sv': 'Svenska',
+    'tha': 'ภาษาไทย',    'th': 'ภาษาไทย',
+    'tur': 'Türkçe',     'tr': 'Türkçe',
+    'pol': 'Polski',     'pl': 'Polski',
+    'ind': 'Bahasa Indonesia', 'id': 'Bahasa Indonesia',
+    'msa': 'Bahasa Melayu',    'ms': 'Bahasa Melayu',
+}
+
+
+def get_language_label(lang_code, title=None):
+    """Get human-readable label from language code or track title."""
+    if title and title.strip():
+        return title.strip()
+    if lang_code:
+        return LANGUAGE_LABELS.get(lang_code.lower(), lang_code.upper())
+    return 'Unknown'
+
+
+def get_subtitle_cache_dir(filepath: Path) -> Path:
+    """Get subtitle cache directory using video hash."""
+    vid_hash = _video_hash(filepath)
+    cache_dir = THUMBNAILS_DIR / "subs" / vid_hash
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+async def probe_subtitle_streams(filepath: Path) -> list:
+    """Probe video file for embedded text-based subtitle streams."""
+    SUPPORTED_CODECS = {'subrip', 'ass', 'ssa', 'mov_text', 'webvtt', 'srt'}
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_streams',
+            '-select_streams', 's',
+            str(filepath)
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        data = json.loads(out.decode(errors='ignore'))
+        streams = data.get('streams', [])
+
+        results = []
+        sub_index = 0  # subtitle-relative index for -map 0:s:{i}
+        for s in streams:
+            codec = s.get('codec_name', '').lower()
+            if codec not in SUPPORTED_CODECS:
+                sub_index += 1
+                continue
+            tags = s.get('tags', {})
+            results.append({
+                'stream_index': sub_index,
+                'codec_name': codec,
+                'language': tags.get('language', ''),
+                'title': tags.get('title', ''),
+            })
+            sub_index += 1
+        return results
+    except Exception:
+        return []
+
+
+async def extract_embedded_subtitle(filepath: Path, stream_index: int, out_path: Path) -> bool:
+    """Extract a single subtitle stream to WebVTT file."""
+    try:
+        cmd = [
+            'ffmpeg', '-v', 'quiet',
+            '-i', str(filepath),
+            '-map', f'0:s:{stream_index}',
+            '-c:s', 'webvtt',
+            '-y',
+            str(out_path)
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+        return proc.returncode == 0 and out_path.exists()
+    except Exception:
+        return False
+
+
+async def get_embedded_subtitles(filepath: Path) -> list:
+    """Extract and cache embedded subtitle tracks from video file."""
+    cache_dir = get_subtitle_cache_dir(filepath)
+    manifest_path = cache_dir / 'manifest.json'
+
+    # Check cache first
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    # Probe for subtitle streams
+    streams = await probe_subtitle_streams(filepath)
+    if not streams:
+        return []
+
+    extracted = []
+    for i, stream in enumerate(streams):
+        lang = stream.get('language', '') or ''
+        title = stream.get('title', '') or ''
+        label = get_language_label(lang, title)
+
+        filename = f"{i}_{lang or 'track'}.vtt"
+        out_path = cache_dir / filename
+
+        if not out_path.exists():
+            success = await extract_embedded_subtitle(
+                filepath,
+                stream['stream_index'],
+                out_path
+            )
+            if not success:
+                continue
+
+        extracted.append({
+            'label': label,
+            'language': lang[:2] if lang else 'un',
+            'src': f'/api/media/subtitle-file-cached/{cache_dir.name}/{filename}'
+        })
+
+    # Save manifest cache
+    if extracted:
+        try:
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(extracted, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    return extracted
+
+
 def scan_subtitles(filepath: Path) -> list:
     """Scan for external subtitle files (.srt, .vtt) matching the video filename.
     Returns list of {label, language, src}.
@@ -739,14 +900,7 @@ def scan_subtitles(filepath: Path) -> list:
         else:
             continue  # not a match (e.g. "video2.srt" for "video.mp4")
 
-        # Create label from language code
-        lang_labels = {
-            "vi": "Tiếng Việt", "en": "English", "ja": "日本語",
-            "ko": "한국어", "zh": "中文", "fr": "Français",
-            "de": "Deutsch", "es": "Español", "pt": "Português",
-            "th": "ไทย", "und": "Subtitle",
-        }
-        label = lang_labels.get(lang, lang.upper())
+        label = get_language_label(lang)
 
         # Build serve URL via subtitle-file endpoint
         rel_path = str(f.relative_to(DOWNLOAD_DIR)).replace("\\", "/")
@@ -760,6 +914,14 @@ def scan_subtitles(filepath: Path) -> list:
 
     # Sort: defined languages first
     results.sort(key=lambda x: (x["language"] == "und", x["language"]))
+    return results
+
+
+async def scan_subtitles_with_embedded(filepath: Path) -> list:
+    """Scan for subtitles: external first, fallback to embedded."""
+    results = scan_subtitles(filepath)
+    if not results:
+        results = await get_embedded_subtitles(filepath)
     return results
 
 
@@ -803,3 +965,4 @@ def srt_to_vtt_content(raw_bytes: bytes) -> str:
         i += 1
 
     return "\n".join(vtt_lines)
+

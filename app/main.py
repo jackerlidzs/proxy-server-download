@@ -77,6 +77,7 @@ async def lifespan(app):
     VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
     HLS_DIR.mkdir(parents=True, exist_ok=True)
     THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+    (THUMBNAILS_DIR / "subs").mkdir(parents=True, exist_ok=True)
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Initialize database
