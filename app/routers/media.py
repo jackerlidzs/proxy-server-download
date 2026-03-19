@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from auth import verify_key
-from config import DOWNLOAD_DIR, VIDEO_EXTS
+from config import DOWNLOAD_DIR, VIDEO_EXTS, FFMPEG_PRESET, MAX_CONCURRENT_TRANSCODE
 from services.media_service import (
     list_media, get_media_info, generate_thumbnail, extract_subtitles,
     convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls,
@@ -403,4 +403,30 @@ async def api_cached_subtitle(cache_hash: str, filename: str, _=Depends(verify_k
         media_type="text/vtt",
         headers={"Cache-Control": "public, max-age=86400"}
     )
+
+
+@router.get("/server-status")
+async def server_status(_=Depends(verify_key)):
+    """Server health endpoint — CPU, RAM, conversion readiness."""
+    import psutil
+
+    cpu = psutil.cpu_percent(interval=1)
+    mem = psutil.virtual_memory()
+
+    return {
+        "cpu_cores": psutil.cpu_count(),
+        "cpu_percent": cpu,
+        "ram_total_gb": round(mem.total / 1024**3, 1),
+        "ram_used_gb": round(mem.used / 1024**3, 1),
+        "ram_free_gb": round(mem.available / 1024**3, 1),
+        "ram_percent": mem.percent,
+        "safe_to_convert": mem.available > 500 * 1024**2 and cpu < 70,
+        "recommendation": (
+            "OK" if cpu < 50 and mem.percent < 70 else
+            "BUSY" if cpu < 80 and mem.percent < 85 else
+            "OVERLOADED"
+        ),
+        "ffmpeg_preset": FFMPEG_PRESET,
+        "max_concurrent": MAX_CONCURRENT_TRANSCODE,
+    }
 
