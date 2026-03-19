@@ -47,8 +47,25 @@
         // HLS đã sẵn sàng → dùng luôn (seek instant, nhẹ server)
         loadPlayer(filePath, statusData.master_url, subs);
 
+      } else if (statusData.status === 'transcoding') {
+        // Đang convert → chờ với timeout, fallback nếu quá lâu
+        var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
+        showStatusOverlay('\u23f3 Đang xử lý video...');
+        try {
+          var readyData = await waitUntilReady(filePath);
+          hideStatusOverlay();
+          if (readyData && readyData.fallback) {
+            loadPlayerDirect(filePath, directUrl, subs);
+          } else {
+            loadPlayer(filePath, readyData.master_url, subs);
+          }
+        } catch(err) {
+          hideStatusOverlay();
+          loadPlayerDirect(filePath, directUrl, subs);
+        }
+
       } else {
-        // HLS chưa có → play NGAY qua URL đã được probe
+        // not_started / error / unknown → play NGAY qua direct stream
         var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
         loadPlayerDirect(filePath, directUrl, subs);
       }
@@ -239,6 +256,11 @@
   }
 
   function destroyPlayer() {
+    // Clear HLS polling nếu đang chạy
+    if (window._hlsPollingInterval) {
+      clearInterval(window._hlsPollingInterval);
+      window._hlsPollingInterval = null;
+    }
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
     var videoEl = document.getElementById('player');
@@ -424,9 +446,19 @@
       'audio_only': 'Convert audio',
       're-encode':  'Re-encode video',
     };
+    var MAX_WAIT = 30 * 60 * 1000; // 30 phút tối đa
+    var startTime = Date.now();
 
-    return new Promise(function(resolve) {
+    return new Promise(function(resolve, reject) {
       var interval = setInterval(async function() {
+        // Timeout check
+        if (Date.now() - startTime > MAX_WAIT) {
+          clearInterval(interval);
+          window._hlsPollingInterval = null;
+          reject(new Error('HLS convert timeout'));
+          return;
+        }
+
         var data = await fetchHlsStatus(filePath);
 
         if (data.status === 'transcoding' && data.progress) {
@@ -450,15 +482,20 @@
 
         if (data.status === 'error') {
           clearInterval(interval);
+          window._hlsPollingInterval = null;
           showStatusOverlay('\u274c Convert thất bại. Thử stream trực tiếp...');
           setTimeout(function() { resolve({ fallback: true }); }, 2000);
         }
 
         if (data.status === 'ready') {
           clearInterval(interval);
+          window._hlsPollingInterval = null;
           resolve(data);
         }
       }, 5000);
+
+      // Lưu interval ID để cancel từ destroyPlayer()
+      window._hlsPollingInterval = interval;
     });
   }
 
