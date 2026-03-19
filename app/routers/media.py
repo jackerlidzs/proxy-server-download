@@ -323,7 +323,7 @@ async def api_remux_cleanup(filepath: str, _=Depends(verify_key)):
 
 # --- Seek Preview Thumbnails ---
 @router.get("/api/media/thumbnails/{filepath:path}")
-async def api_thumbnails(filepath: str, _=Depends(verify_key)):
+async def api_thumbnails(filepath: str):
     """Get VTT file for Plyr seek preview thumbnails.
     Returns VTT if already generated, 202 if generating, 404 on error."""
     import asyncio
