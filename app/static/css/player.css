@@ -137,15 +137,24 @@
   width: 13px; height: 13px;
 }
 
-/* Volume slider — rộng hơn */
+/* Volume slider — giới hạn width */
 .plyr__volume {
-  min-width: 80px;
-  max-width: 120px;
+  min-width: 60px;
+  max-width: 90px;
+  width: 90px;
+  margin-left: 4px !important;
+  margin-right: 8px !important;
 }
 
-/* Tăng khoảng cách giữa các control groups */
+/* Tăng khoảng cách giữa các control items */
 .plyr__controls > * + * {
-  margin-left: 2px;
+  margin-left: 6px;
+}
+
+/* Settings + PiP group — thêm space trước */
+.plyr__controls [data-plyr="settings"],
+.plyr__controls [data-plyr="pip"] {
+  margin-left: 4px !important;
 }
 
 /* Time display rõ hơn */

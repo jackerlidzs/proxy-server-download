@@ -105,6 +105,23 @@ def cancel_download(tid: str):
             pass
 
 
+def stop_download(tid: str):
+    """Stop a download — kill subprocess but keep partial file for resume."""
+    if tid not in downloads:
+        return
+    d = downloads[tid]
+    if d["status"] not in ("downloading", "queued"):
+        return
+    d["status"] = "stopped"
+    d["speed"] = ""
+    proc = _processes.pop(tid, None)
+    if proc and proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 async def monitor_progress(tid, fp, total=0):
     t0 = asyncio.get_event_loop().time()
     last_sz, last_t = 0, t0
@@ -186,7 +203,7 @@ async def dl_curl(tid, url, headers, filename, resume=False):
         _processes.pop(tid, None)
 
         # Check if cancelled during download
-        if downloads.get(tid, {}).get("status") == "cancelled":
+        if downloads.get(tid, {}).get("status") in ("cancelled", "stopped"):
             return False, "Cancelled"
 
         if proc.returncode == 0 and fp.exists():
@@ -219,7 +236,7 @@ async def dl_curl(tid, url, headers, filename, resume=False):
                 "completed_at": datetime.now().isoformat(), "progress": "100%", "speed": ""
             })
             return True, None
-        if proc.returncode == -9 or downloads.get(tid, {}).get("status") == "cancelled":
+        if proc.returncode == -9 or downloads.get(tid, {}).get("status") in ("cancelled", "stopped"):
             return False, "Cancelled"
         return False, stderr.decode(errors="ignore").strip() or f"curl exit {proc.returncode}"
     except FileNotFoundError:
@@ -264,13 +281,13 @@ async def dl_aria2c(tid, url, headers, filename, conns, resume=False):
                 if sm:
                     downloads[tid]["speed"] = sm.group(1) + "/s"
             # Check cancel
-            if downloads.get(tid, {}).get("status") == "cancelled":
+            if downloads.get(tid, {}).get("status") in ("cancelled", "stopped"):
                 proc.kill()
                 break
         await proc.wait()
         _processes.pop(tid, None)
 
-        if downloads.get(tid, {}).get("status") == "cancelled":
+        if downloads.get(tid, {}).get("status") in ("cancelled", "stopped"):
             return False, "Cancelled"
 
         if proc.returncode == 0 and fp.exists():
@@ -320,7 +337,7 @@ async def run_download(tid, url, headers, filename, conns, engine="auto", resume
                 ok, err = await dl_aria2c(tid, url, headers, filename, conns, resume)
 
         if not ok:
-            if downloads.get(tid, {}).get("status") != "cancelled":
+            if downloads.get(tid, {}).get("status") not in ("cancelled", "stopped"):
                 downloads[tid].update({"status": "failed", "error": err or "Unknown", "speed": ""})
         else:
             # Index file metadata (NO auto-extract)

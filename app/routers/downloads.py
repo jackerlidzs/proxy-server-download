@@ -11,7 +11,7 @@ from models import DownloadRequest
 from config import MAX_CONNECTIONS
 from services.download_service import (
     downloads, run_download, parse_curl_command,
-    filename_from_url, sanitize, cancel_download
+    filename_from_url, sanitize, cancel_download, stop_download
 )
 
 router = APIRouter(prefix="/api", tags=["downloads"])
@@ -66,13 +66,24 @@ async def api_cancel_download(tid: str, _=Depends(verify_key)):
     return {"message": f"Cancelled {tid}"}
 
 
+@router.post("/downloads/{tid}/stop")
+async def api_stop_download(tid: str, _=Depends(verify_key)):
+    if tid not in downloads:
+        raise HTTPException(404)
+    d = downloads[tid]
+    if d["status"] not in ("downloading", "queued"):
+        raise HTTPException(400, "Can only stop active downloads")
+    stop_download(tid)
+    return {"message": f"Stopped {tid}", "task_id": tid}
+
+
 @router.post("/downloads/{tid}/resume")
 async def resume_download(tid: str, _=Depends(verify_key)):
     if tid not in downloads:
         raise HTTPException(404)
     d = downloads[tid]
-    if d["status"] not in ("cancelled", "failed"):
-        raise HTTPException(400, "Can only resume cancelled or failed downloads")
+    if d["status"] not in ("cancelled", "failed", "stopped"):
+        raise HTTPException(400, "Can only resume cancelled, failed or stopped downloads")
     url = d.get("url", "")
     if not url:
         raise HTTPException(400, "No URL to resume")
@@ -92,7 +103,7 @@ async def resume_download(tid: str, _=Depends(verify_key)):
 @router.delete("/downloads")
 async def clear_completed(_=Depends(verify_key)):
     to_remove = [k for k, v in downloads.items()
-                 if v["status"] in ("completed", "failed", "cancelled")]
+                 if v["status"] in ("completed", "failed", "cancelled", "stopped")]
     for k in to_remove:
         del downloads[k]
     return {"cleared": len(to_remove)}

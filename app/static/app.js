@@ -196,6 +196,9 @@ async function subCurl(){
 async function cancelDl(tid){
   try{await api('DELETE','/api/downloads/'+tid);rAll()}catch(e){toast(e.message,'err')}
 }
+async function stopDl(tid){
+  try{await api('POST','/api/downloads/'+tid+'/stop');rAll()}catch(e){toast(e.message,'err')}
+}
 async function resumeDl(tid){
   try{await api('POST','/api/downloads/'+tid+'/resume');rAll()}catch(e){toast(e.message,'err')}
 }
@@ -223,7 +226,7 @@ function renderDL(items){
   document.getElementById('sAct').textContent=act;document.getElementById('sDone').textContent=done;
   const w=hasAct;hasAct=act>0;if(hasAct!==w)startPoll();
   if(!items.length){el.innerHTML='<div class="empty"><span>📭</span>No downloads</div>';return}
-  const ord={downloading:0,extracting:1,compressing:1,queued:2,completed:3,cancelled:4,failed:5};
+  const ord={downloading:0,extracting:1,compressing:1,queued:2,stopped:3,completed:4,cancelled:5,failed:6};
   items.sort((a,b)=>(ord[a.status]??6)-(ord[b.status]??6)||(b.created_at||'').localeCompare(a.created_at||''));
   el.innerHTML=items.map(d=>{
     const sc={queued:'st-q',downloading:'st-d',completed:'st-c',failed:'st-f',cancelled:'st-q',extracting:'st-e',compressing:'st-e'};
@@ -234,8 +237,8 @@ function renderDL(items){
     else if(d.status==='completed')pH='<div class="prog"><div class="prog-f" style="width:100%"></div></div>';
     // Action buttons
     let aH='';
-    if(d.status==='downloading'||d.status==='queued')aH=`<button class="btn-d" onclick="cancelDl('${d.task_id}')" title="Cancel" style="font-size:10px;padding:2px 6px">✕</button>`;
-    if(d.status==='cancelled'||d.status==='failed')aH=`<button class="btn-g" onclick="resumeDl('${d.task_id}')" title="Resume" style="font-size:10px;padding:2px 6px">▶</button>`;
+    if(d.status==='downloading'||d.status==='queued')aH=`<button class="btn-o" onclick="stopDl('${d.task_id}')" title="Stop (keep partial file)" style="font-size:10px;padding:2px 6px">⏸</button><button class="btn-d" onclick="cancelDl('${d.task_id}')" title="Cancel" style="font-size:10px;padding:2px 6px">✕</button>`;
+    if(d.status==='cancelled'||d.status==='failed'||d.status==='stopped')aH=`<button class="btn-g" onclick="resumeDl('${d.task_id}')" title="Resume" style="font-size:10px;padding:2px 6px">▶</button>`;
     const fnExt=d.filename?'.'+d.filename.split('.').pop().toLowerCase():'';
     const isVid=VID_EXTS.includes(fnExt);
     if(d.status==='completed'&&d.download_url){
@@ -249,9 +252,10 @@ function renderDL(items){
     }
     let eR='';if(d.status==='failed'&&d.error)eR=`<div style="font-size:10px;color:var(--red);margin-top:4px;word-break:break-all">❌ ${esc(d.error.substring(0,150))}</div>`;
     if(d.status==='cancelled')eR=`<div style="font-size:10px;color:var(--txt3);margin-top:4px">Cancelled — click ▶ to resume</div>`;
+    if(d.status==='stopped')eR=`<div style="font-size:10px;color:var(--ylw);margin-top:4px">⏸ Stopped — click ▶ to resume download</div>`;
     const sz=d.status==='completed'&&d.file_size?`<span>${hs(d.file_size)}</span>`:'';
     const t=d.created_at?new Date(d.created_at).toLocaleTimeString():'';
-    const ic={extracting:'📦',compressing:'🗜️',cancelled:'⏸'}[d.status]||'📄';
+    const ic={extracting:'📦',compressing:'🗜️',cancelled:'⏸',stopped:'⏸'}[d.status]||'📄';
     const nameClick=d.status==='completed'&&d.filename?` onclick="navigateToFile('${d.filename.replace(/'/g,"\\'")}')"; style="cursor:pointer"`:'';
     return`<div class="dl-i"><div class="dl-top"><div class="dl-name"${nameClick}>${ic} ${esc(d.filename||'?')}</div><div class="dl-acts">${aH}</div></div><div class="dl-meta"><span class="st ${sc[d.status]||'st-q'}">${d.status}</span>${eH}${sz}<span>🕐 ${t}</span></div>${pH}${eR}</div>`;
   }).join('');
