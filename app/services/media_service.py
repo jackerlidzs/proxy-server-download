@@ -882,6 +882,7 @@ def get_thumbnail_cache_dir(filepath: Path) -> Path:
 
 
 async def generate_sprite_thumbnails(filepath: Path):
+    # v2: 480x270 -q:v 3
     """Generate sprite sheet + VTT for Plyr seek preview thumbnails.
     Uses relative sprite path in VTT so Plyr resolves correctly after redirect.
     """
@@ -907,7 +908,7 @@ async def generate_sprite_thumbnails(filepath: Path):
         return None
     cols = 10
     rows = math.ceil(total_frames / cols)
-    thumb_w, thumb_h = 320, 180
+    thumb_w, thumb_h = 480, 270
 
     # Generate sprite sheet with ffmpeg
     try:
@@ -915,7 +916,7 @@ async def generate_sprite_thumbnails(filepath: Path):
             'ffmpeg', '-y', '-i', str(filepath),
             '-vf', f'fps=1/{interval},scale={thumb_w}:{thumb_h},tile={cols}x{rows}',
             '-frames:v', '1',
-            '-q:v', '5',
+            '-q:v', '3',
             str(sprite_jpg)
         ]
         proc = await asyncio.create_subprocess_exec(
