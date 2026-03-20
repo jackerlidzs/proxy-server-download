@@ -517,10 +517,14 @@
   async function getThumbnailSrc(filePath) {
     var url = '/api/media/thumbnails/' + encodeFilePath(filePath);
     try {
-      var res = await fetch(url, { redirect: 'follow' });
+      var res = await fetch(url, { redirect: 'follow', cache: 'no-store' });
 
-      // Ready → return final redirected VTT url immediately
+      // Ready → validate URL is actual VTT, not API endpoint
       if (res.ok) {
+        if (!res.url.includes('/thumbnails/') || !res.url.endsWith('.vtt')) {
+          console.warn('[thumbnail] unexpected redirect target:', res.url);
+          return null;
+        }
         console.log('[thumbnail] ready:', res.url);
         return res.url;
       }
@@ -543,8 +547,12 @@
           }
 
           try {
-            var res2 = await fetch(url, { redirect: 'follow' });
+            var res2 = await fetch(url, { redirect: 'follow', cache: 'no-store' });
             if (res2.ok) {
+              if (!res2.url.includes('/thumbnails/') || !res2.url.endsWith('.vtt')) {
+                console.warn('[thumbnail] retry: unexpected url:', res2.url);
+                return;
+              }
               console.log('[thumbnail] retry success, injecting:', res2.url);
               clearInterval(retryInterval);
               window._thumbnailRetryInterval = null;
