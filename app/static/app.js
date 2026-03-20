@@ -758,7 +758,9 @@ async function doShare(){
   const btn=document.getElementById('shareGoBtn');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
     const r=await api('POST','/api/share',{filepath:shareTarget,expire_hours:hours,password:pw});
-    document.getElementById('shareUrl').value=r.url;
+    // Build URL client-side (backend request.base_url returns Docker internal URL)
+    const shareUrl=window.location.origin+'/s/'+r.token;
+    document.getElementById('shareUrl').value=shareUrl;
     document.getElementById('shareResult').style.display='block';
     document.getElementById('shareGoBtn').style.display='none';
     toast('Share link created!','ok');rShares();
@@ -771,7 +773,14 @@ async function rShares(){
     const el=document.getElementById('shareList');
     const items=d.shares||[];
     if(!items.length){el.innerHTML='<div class="empty"><span>🔗</span>No share links</div>';return}
-    el.innerHTML=items.map(s=>`<div class="trash-item"><div class="trash-info"><div class="trash-name">🔗 ${esc(s.file_path)}</div><div class="trash-meta">${s.password_protected?'🔒 ':''}Downloads: ${s.download_count}${s.max_downloads?' / '+s.max_downloads:''} · Created ${new Date(s.created_at).toLocaleString()}${s.expires_at?' · Expires '+new Date(s.expires_at).toLocaleString():' · Never expires'}</div></div><div class="trash-actions"><button class="btn-s" onclick="cpL('${s.url}')">📋 Copy</button><button class="btn-d" onclick="delShare('${s.token}')">🗑</button></div></div>`).join('');
+    const origin=window.location.origin;
+    el.innerHTML=items.map(s=>{
+      const url=origin+'/s/'+s.token;
+      const fname=s.file_path.split('/').pop();
+      const expiry=s.expires_at?'⏱ '+new Date(s.expires_at).toLocaleString():'∞ Never expires';
+      const dl=s.max_downloads?s.download_count+'/'+s.max_downloads:s.download_count;
+      return`<div class="trash-item"><div class="trash-info"><div class="trash-name">${s.password_protected?'🔒':'🔗'} ${esc(fname)}</div><div class="trash-meta">📥 ${dl} downloads · ${expiry}</div><div style="font-size:11px;color:var(--pri2);word-break:break-all;margin-top:4px">${esc(url)}</div></div><div class="trash-actions"><button class="btn-s" onclick="cpL('${url}')">📋</button><button class="btn-d" onclick="delShare('${s.token}')">🗑</button></div></div>`;
+    }).join('');
   }catch(e){console.error(e)}
 }
 async function delShare(token){
