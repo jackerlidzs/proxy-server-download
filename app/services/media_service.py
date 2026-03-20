@@ -871,26 +871,34 @@ async def cleanup_remux(filepath: Path):
 
 # ===== Sprite Thumbnails for Seek Preview =====
 
+def get_thumbnail_cache_dir(filepath: Path) -> Path:
+    """Get thumbnail cache directory based on file hash."""
+    stat = filepath.stat()
+    key = f"{filepath.name}{stat.st_size}{stat.st_mtime}"
+    hash_ = hashlib.md5(key.encode()).hexdigest()[:12]
+    cache = THUMBNAILS_DIR / hash_
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
 async def generate_sprite_thumbnails(filepath: Path):
     """Generate sprite sheet + VTT for Plyr seek preview thumbnails.
-    Returns (vtt_path, sprite_dir) or None on failure.
-    Uses dynamic tile sizing based on video duration.
+    Uses relative sprite path in VTT so Plyr resolves correctly after redirect.
     """
-    vid_hash = _video_hash(filepath)
-    thumb_dir = THUMBNAILS_DIR / vid_hash
-    sprite_path = thumb_dir / "sprite.jpg"
-    vtt_path = thumb_dir / "thumbnails.vtt"
+    cache_dir = get_thumbnail_cache_dir(filepath)
+    sprite_jpg = cache_dir / 'sprite.jpg'
+    vtt_file = cache_dir / 'index.vtt'
 
     # Already generated
-    if vtt_path.exists() and sprite_path.exists():
-        return (vtt_path, thumb_dir)
+    if sprite_jpg.exists() and vtt_file.exists():
+        return str(vtt_file)
 
-    # Get duration
+    # Probe duration
     duration = await quick_probe_duration(filepath)
     if duration <= 0:
         return None
 
-    thumb_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Dynamic tile sizing
     interval = 10  # 1 frame every 10 seconds
@@ -904,11 +912,11 @@ async def generate_sprite_thumbnails(filepath: Path):
     # Generate sprite sheet with ffmpeg
     try:
         cmd = [
-            "ffmpeg", "-y", "-i", str(filepath),
-            "-vf", f"fps=1/{interval},scale={thumb_w}:{thumb_h},tile={cols}x{rows}",
-            "-frames:v", "1",
-            "-q:v", "5",
-            str(sprite_path)
+            'ffmpeg', '-y', '-i', str(filepath),
+            '-vf', f'fps=1/{interval},scale={thumb_w}:{thumb_h},tile={cols}x{rows}',
+            '-frames:v', '1',
+            '-q:v', '5',
+            str(sprite_jpg)
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -917,37 +925,47 @@ async def generate_sprite_thumbnails(filepath: Path):
         )
         await asyncio.wait_for(proc.communicate(), timeout=120)
 
-        if proc.returncode != 0 or not sprite_path.exists():
+        if proc.returncode != 0 or not sprite_jpg.exists():
             return None
     except Exception:
         return None
 
-    # Generate VTT file
-    try:
-        # Sprite URL relative to /thumbnails mount
-        sprite_url = f"/thumbnails/{vid_hash}/sprite.jpg"
-        lines = ["WEBVTT", ""]
+    # Generate VTT file with RELATIVE sprite path
+    # (Plyr will resolve 'sprite.jpg' relative to the VTT URL after 302 redirect)
+    sprite_url = 'sprite.jpg'
+    lines = ['WEBVTT', '']
 
-        for i in range(total_frames):
-            start_sec = i * interval
-            end_sec = min((i + 1) * interval, duration)
+    for i in range(total_frames):
+        start_sec = i * interval
+        end_sec = min((i + 1) * interval, duration)
 
-            col = i % cols
-            row = i // cols
-            x = col * thumb_w
-            y = row * thumb_h
+        col = i % cols
+        row = i // cols
+        x = col * thumb_w
+        y = row * thumb_h
 
-            start_ts = _seconds_to_vtt_time(start_sec)
-            end_ts = _seconds_to_vtt_time(end_sec)
+        start_ts = _seconds_to_vtt_time(start_sec)
+        end_ts = _seconds_to_vtt_time(end_sec)
 
-            lines.append(f"{start_ts} --> {end_ts}")
-            lines.append(f"{sprite_url}#xywh={x},{y},{thumb_w},{thumb_h}")
-            lines.append("")
+        lines.append(f'{start_ts} --> {end_ts}')
+        lines.append(f'{sprite_url}#xywh={x},{y},{thumb_w},{thumb_h}')
+        lines.append('')
 
-        vtt_path.write_text("\n".join(lines), encoding="utf-8")
-        return (vtt_path, thumb_dir)
-    except Exception:
-        return None
+    vtt_file.write_text('\n'.join(lines), encoding='utf-8')
+    return str(vtt_file)
+
+
+def get_thumbnail_vtt_url(filepath: Path) -> dict:
+    """Check if thumbnail VTT is ready and return URL info."""
+    cache_dir = get_thumbnail_cache_dir(filepath)
+    vtt_file = cache_dir / 'index.vtt'
+    if vtt_file.exists():
+        return {
+            'status': 'ready',
+            'hash': cache_dir.name,
+            'vtt_url': f'/thumbnails/{cache_dir.name}/index.vtt'
+        }
+    return {'status': 'not_generated'}
 
 
 def _seconds_to_vtt_time(sec: float) -> str:
@@ -961,7 +979,8 @@ def _seconds_to_vtt_time(sec: float) -> str:
 
 def get_thumbnail_dir(filepath: Path) -> Path:
     """Get thumbnail cache directory for a video."""
-    return THUMBNAILS_DIR / _video_hash(filepath)
+    return get_thumbnail_cache_dir(filepath)
+
 
 
 # ===== Subtitle Scanning & Conversion =====

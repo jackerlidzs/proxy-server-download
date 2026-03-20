@@ -12,6 +12,7 @@ from services.media_service import (
     convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls,
     get_remux_status, check_needs_remux, remux_to_mp4, cleanup_remux,
     generate_sprite_thumbnails, get_thumbnail_dir,
+    get_thumbnail_cache_dir, get_thumbnail_vtt_url,
     scan_subtitles, scan_subtitles_with_embedded, srt_to_vtt_content
 )
 
@@ -324,28 +325,28 @@ async def api_remux_cleanup(filepath: str, _=Depends(verify_key)):
 # --- Seek Preview Thumbnails ---
 @router.get("/api/media/thumbnails/{filepath:path}")
 async def api_thumbnails(filepath: str):
-    """Get VTT file for Plyr seek preview thumbnails.
-    Returns VTT if already generated, 202 if generating, 404 on error."""
+    """Get VTT for Plyr seek preview thumbnails.
+    No auth required — Plyr fetches without headers.
+    Returns 302 redirect to static VTT if ready, 202 if generating."""
+    from fastapi.responses import RedirectResponse, JSONResponse
     import asyncio
+
     fp = DOWNLOAD_DIR / filepath
     if not fp.exists():
-        raise HTTPException(404)
+        raise HTTPException(404, "File not found")
 
-    thumb_dir = get_thumbnail_dir(fp)
-    vtt_path = thumb_dir / "thumbnails.vtt"
+    # Check cache
+    info = get_thumbnail_vtt_url(fp)
 
-    # Already generated → serve VTT
-    if vtt_path.exists():
-        from fastapi.responses import Response
-        content = vtt_path.read_text(encoding="utf-8")
-        return Response(content=content, media_type="text/vtt")
+    if info['status'] == 'ready':
+        # Redirect to static VTT so Plyr resolves relative sprite.jpg correctly
+        return RedirectResponse(url=info['vtt_url'], status_code=302)
 
-    # Trigger generation in background
+    # Not generated yet → trigger in background
     asyncio.create_task(generate_sprite_thumbnails(fp))
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=202,
-        content={"status": "generating", "message": "Thumbnail sprites are being generated"}
+        content={'status': 'generating', 'message': 'Thumbnail sprites are being generated'}
     )
 
 
