@@ -930,9 +930,9 @@ async def generate_sprite_thumbnails(filepath: Path):
     except Exception:
         return None
 
-    # Generate VTT file with RELATIVE sprite path
-    # (Plyr will resolve 'sprite.jpg' relative to the VTT URL after 302 redirect)
-    sprite_url = 'sprite.jpg'
+    # Generate VTT file with ABSOLUTE sprite path
+    # (Plyr resolves relative URLs against pre-redirect URL, causing 404)
+    sprite_url = f'/thumbnails/{cache_dir.name}/sprite.jpg'
     lines = ['WEBVTT', '']
 
     for i in range(total_frames):
