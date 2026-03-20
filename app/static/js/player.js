@@ -644,8 +644,24 @@
   // ─── HELPERS ─────────────────────────────────────────────
 
   // Encode path nhưng giữ nguyên dấu /
-  function encodeFilePath(path) {
-    return path.split('/').map(encodeURIComponent).join('/');
+  function encodeFilePath(filePath) {
+    return filePath
+      .split('/')
+      .map(function(segment) {
+        return encodeURIComponent(segment)
+          // encodeURIComponent bỏ sót các ký tự sau — fix thủ công:
+          .replace(/'/g,  '%27')   // apostrophe  → Tom Clancy's
+          .replace(/!/g,  '%21')   // exclamation → WOW!
+          .replace(/\(/g, '%28')   // open paren  → film(2024)
+          .replace(/\)/g, '%29')   // close paren → film(2024)
+          .replace(/\*/g, '%2A'); // asterisk    → file*name
+          // Không encode: - _ . ~ (an toàn trong URL path)
+          // Tự động xử lý bởi encodeURIComponent:
+          //   Tiếng Việt, Chinese, Japanese, Korean → %XX%XX
+          //   Khoảng trắng → %20
+          //   #, ?, &, =, +, @, $ → %XX
+      })
+      .join('/');
   }
 
   function showStatusOverlay(msg) {
