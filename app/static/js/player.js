@@ -137,11 +137,12 @@
       ratio: '16:9',
     };
 
-    // Thumbnail preview — always init so retry can enable later
+    // Thumbnail preview — safe init, retry uses setPreviewThumbnails() API
     var thumbSrc = await getThumbnailSrc(filePath);
+    console.log('[thumbnail] init src:', thumbSrc);
     plyrConfig.previewThumbnails = {
-      enabled: true,       // ALWAYS true — forces Plyr to create the plugin object
-      src: thumbSrc || ''  // empty string = plugin exists but shows nothing
+      enabled: !!thumbSrc,  // true only when src ready → safe init
+      src: thumbSrc || ''   // empty string when not ready
     };
 
     // Captions config if subs available
@@ -219,11 +220,12 @@
       ratio: '16:9',
     };
 
-    // Thumbnail preview — always init so retry can enable later
+    // Thumbnail preview — safe init, retry uses setPreviewThumbnails() API
     var thumbSrc = await getThumbnailSrc(filePath);
+    console.log('[thumbnail] init src:', thumbSrc);
     plyrConfig.previewThumbnails = {
-      enabled: true,       // ALWAYS true — forces Plyr to create the plugin object
-      src: thumbSrc || ''  // empty string = plugin exists but shows nothing
+      enabled: !!thumbSrc,  // true only when src ready → safe init
+      src: thumbSrc || ''   // empty string when not ready
     };
 
     // Captions config if subs available
@@ -515,40 +517,62 @@
   async function getThumbnailSrc(filePath) {
     var url = '/api/media/thumbnails/' + encodeFilePath(filePath);
     try {
-      // Fetch với redirect follow để lấy final URL
       var res = await fetch(url, { redirect: 'follow' });
 
+      // Ready → return final redirected VTT url immediately
+      if (res.ok) {
+        console.log('[thumbnail] ready:', res.url);
+        return res.url;
+      }
+
+      // Generating → start retry loop
       if (res.status === 202) {
-        // Đang generate → retry loop: mỗi 10s, tối đa 6 lần (60s)
+        console.log('[thumbnail] generating, starting retry loop...');
+
         var retryCount = 0;
         var retryInterval = setInterval(async function() {
           retryCount++;
-          if (retryCount >= 6 || !plyrInstance) {
+          console.log('[thumbnail] retry #' + retryCount);
+
+          // Stop if player destroyed or max retries reached (6 × 10s = 60s)
+          if (!plyrInstance || retryCount >= 6) {
+            console.log('[thumbnail] retry stopped:', !plyrInstance ? 'player destroyed' : 'max retries');
             clearInterval(retryInterval);
+            window._thumbnailRetryInterval = null;
             return;
           }
+
           try {
             var res2 = await fetch(url, { redirect: 'follow' });
-            if (res2.ok && plyrInstance) {
+            if (res2.ok) {
+              console.log('[thumbnail] retry success, injecting:', res2.url);
               clearInterval(retryInterval);
-              try {
-                plyrInstance.previewThumbnails.src     = res2.url;
-                plyrInstance.previewThumbnails.enabled = true;
-              } catch(e2) { console.warn('[thumbnail] update failed:', e2); }
+              window._thumbnailRetryInterval = null;
+
+              // Use Plyr public API — properly destroys old plugin
+              // and creates fresh PreviewThumbnails instance that loads the VTT
+              plyrInstance.setPreviewThumbnails({
+                enabled: true,
+                src: res2.url
+              });
             }
           } catch(e) {
-            console.warn('[thumbnail] retry failed:', e);
+            console.warn('[thumbnail] retry error:', e);
           }
         }, 10000);
+
         window._thumbnailRetryInterval = retryInterval;
         return null;
       }
 
-      // res.url = final URL sau redirect
-      // Ví dụ: /thumbnails/931dd982a2d0/index.vtt
-      if (res.ok) return res.url;
+      // 404 or other error
+      console.warn('[thumbnail] not available, status:', res.status);
       return null;
-    } catch(e) { return null; }
+
+    } catch(e) {
+      console.warn('[thumbnail] fetch error:', e);
+      return null;
+    }
   }
 
   // ─── SUBTITLE HELPERS ────────────────────────────────────
