@@ -55,13 +55,13 @@
           var readyData = await waitUntilReady(filePath);
           hideStatusOverlay();
           if (readyData && readyData.fallback) {
-            loadPlayerDirect(filePath, directUrl, subs);
+            await loadPlayerDirect(filePath, directUrl, subs);
           } else {
             loadPlayer(filePath, readyData.master_url, subs);
           }
         } catch(err) {
           hideStatusOverlay();
-          loadPlayerDirect(filePath, directUrl, subs);
+          await loadPlayerDirect(filePath, directUrl, subs);
         }
 
       } else {
@@ -179,7 +179,7 @@
     initProgressSaving(currentPath);
   }
 
-  function loadPlayerDirect(filePath, streamUrl, subs) {
+  async function loadPlayerDirect(filePath, streamUrl, subs) {
     var videoEl = document.getElementById('player');
     if (!videoEl) return;
 
@@ -216,8 +216,13 @@
       hideControls: true,
       clickToPlay: true,
       ratio: '16:9',
-      // NO previewThumbnails — direct stream may be transcoding, avoid CPU contention
     };
+
+    // Thumbnail preview — check if ready, retry if generating
+    var thumbSrc = await getThumbnailSrc(filePath);
+    if (thumbSrc) {
+      plyrConfig.previewThumbnails = { enabled: true, src: thumbSrc };
+    }
 
     // Captions config if subs available
     if (subs && subs.length > 0) {
@@ -504,18 +509,25 @@
   async function getThumbnailSrc(filePath) {
     var url = '/api/media/thumbnails/' + encodeFilePath(filePath);
     try {
-      var res = await fetch(url, { headers: getAuthHeaders() });
+      var res = await fetch(url);  // KHÔNG auth — endpoint public
+
       if (res.status === 202) {
-        // Đang generate, thử lại sau 15 giây
-        setTimeout(function() {
-          if (plyrInstance) {
-            plyrInstance.previewThumbnails.src = url;
-            plyrInstance.previewThumbnails.enabled = true;
+        // Đang generate, retry sau 15 giây
+        setTimeout(async function() {
+          try {
+            var res2 = await fetch(url);
+            if (res2.ok && plyrInstance) {
+              plyrInstance.previewThumbnails.src     = url;
+              plyrInstance.previewThumbnails.enabled = true;
+            }
+          } catch(e) {
+            console.warn('Thumbnail retry failed:', e);
           }
         }, 15000);
         return null;
       }
-      if (res.ok) return url; // URL thẳng, không blob
+
+      if (res.ok) return url;
       return null;
     } catch(e) { return null; }
   }
