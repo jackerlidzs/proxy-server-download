@@ -2391,3 +2391,64 @@ body::before {
   background: rgba(0, 0, 0, 0.7);
   color: #999;
 }
+
+/* === Share Link Cards === */
+.share-card {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background .15s;
+}
+.share-card:last-child { border-bottom: none }
+.share-card:hover { background: rgba(124, 92, 252, 0.03) }
+.share-card.share-inactive { opacity: .5 }
+.share-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.share-card-info { flex: 1; min-width: 0 }
+.share-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+.share-card-meta {
+  font-size: 11px;
+  color: var(--txt3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.share-card-url {
+  font-size: 11px;
+  color: var(--pri2);
+  word-break: break-all;
+  line-height: 1.4;
+}
+.share-card-acts {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.share-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+}
+.share-badge.share-active {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+}
+.share-badge.share-expired {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+}

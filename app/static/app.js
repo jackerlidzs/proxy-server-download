@@ -746,21 +746,29 @@ function shareFile(filepath){
   shareTarget=filepath;
   document.getElementById('shareFileName').textContent='📄 '+filepath.split('/').pop();
   document.getElementById('shareHours').value='24';
+  document.getElementById('shareMaxDl').value='0';
   document.getElementById('sharePwd').value='';
+  document.getElementById('shareSettings').style.display='block';
   document.getElementById('shareResult').style.display='none';
   document.getElementById('shareGoBtn').style.display='inline-flex';
   document.getElementById('shareM').style.display='flex';
 }
-function closeShare(){document.getElementById('shareM').style.display='none'}
+function closeShare(){
+  document.getElementById('shareM').style.display='none';
+  document.getElementById('shareSettings').style.display='block';
+  document.getElementById('shareResult').style.display='none';
+  document.getElementById('shareGoBtn').style.display='inline-flex';
+}
 async function doShare(){
   const hours=parseInt(document.getElementById('shareHours').value)||0;
+  const maxDl=parseInt(document.getElementById('shareMaxDl').value)||0;
   const pw=document.getElementById('sharePwd').value.trim()||null;
   const btn=document.getElementById('shareGoBtn');btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
-    const r=await api('POST','/api/share',{filepath:shareTarget,expire_hours:hours,password:pw});
-    // Build URL client-side (backend request.base_url returns Docker internal URL)
-    const shareUrl=window.location.origin+'/s/'+r.token;
+    const r=await api('POST','/api/share',{filepath:shareTarget,expire_hours:hours,password:pw,max_downloads:maxDl});
+    const shareUrl=r.url; // Backend returns correct external URL
     document.getElementById('shareUrl').value=shareUrl;
+    document.getElementById('shareSettings').style.display='none';
     document.getElementById('shareResult').style.display='block';
     document.getElementById('shareGoBtn').style.display='none';
     toast('Share link created!','ok');rShares();
@@ -773,13 +781,17 @@ async function rShares(){
     const el=document.getElementById('shareList');
     const items=d.shares||[];
     if(!items.length){el.innerHTML='<div class="empty"><span>🔗</span>No share links</div>';return}
-    const origin=window.location.origin;
     el.innerHTML=items.map(s=>{
-      const url=origin+'/s/'+s.token;
+      const url=s.url; // Use URL from API (correct external URL)
       const fname=s.file_path.split('/').pop();
-      const expiry=s.expires_at?'⏱ '+new Date(s.expires_at).toLocaleString():'∞ Never expires';
+      const expiry=s.expires_at?'⏱ '+new Date(s.expires_at).toLocaleString():'∞ Never';
       const dl=s.max_downloads?s.download_count+'/'+s.max_downloads:s.download_count;
-      return`<div class="trash-item"><div class="trash-info"><div class="trash-name">${s.password_protected?'🔒':'🔗'} ${esc(fname)}</div><div class="trash-meta">📥 ${dl} downloads · ${expiry}</div><div style="font-size:11px;color:var(--pri2);word-break:break-all;margin-top:4px">${esc(url)}</div></div><div class="trash-actions"><button class="btn-s" onclick="cpL('${url}')">📋</button><button class="btn-d" onclick="delShare('${s.token}')">🗑</button></div></div>`;
+      // Status badge
+      let badge='';
+      if(s.expired)badge='<span class="share-badge share-expired">Expired</span>';
+      else if(s.limit_reached)badge='<span class="share-badge share-expired">Limit reached</span>';
+      else badge='<span class="share-badge share-active">Active</span>';
+      return`<div class="share-card${s.active?'':' share-inactive'}"><div class="share-card-top"><div class="share-card-info"><div class="share-card-name">${s.password_protected?'🔒':'🔗'} ${esc(fname)}</div><div class="share-card-meta">${badge} · 📥 ${dl} · ${expiry}</div><div class="share-card-url">${esc(url)}</div></div><div class="share-card-acts"><button class="btn-s" onclick="cpL('${esc(url)}')" title="Copy URL">📋</button><button class="btn-d" onclick="delShare('${s.token}')" title="Delete">🗑</button></div></div></div>`;
     }).join('');
   }catch(e){console.error(e)}
 }
