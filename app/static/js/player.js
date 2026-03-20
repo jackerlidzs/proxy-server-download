@@ -509,15 +509,17 @@
   async function getThumbnailSrc(filePath) {
     var url = '/api/media/thumbnails/' + encodeFilePath(filePath);
     try {
-      var res = await fetch(url);  // KHÔNG auth — endpoint public
+      // Fetch với redirect follow để lấy final URL
+      var res = await fetch(url, { redirect: 'follow' });
 
       if (res.status === 202) {
         // Đang generate, retry sau 15 giây
         setTimeout(async function() {
           try {
-            var res2 = await fetch(url);
+            var res2 = await fetch(url, { redirect: 'follow' });
             if (res2.ok && plyrInstance) {
-              plyrInstance.previewThumbnails.src     = url;
+              // res2.url = final URL sau redirect (e.g. /thumbnails/hash/index.vtt)
+              plyrInstance.previewThumbnails.src     = res2.url;
               plyrInstance.previewThumbnails.enabled = true;
             }
           } catch(e) {
@@ -527,7 +529,9 @@
         return null;
       }
 
-      if (res.ok) return url;
+      // res.url = final URL sau redirect
+      // Ví dụ: /thumbnails/931dd982a2d0/index.vtt
+      if (res.ok) return res.url;
       return null;
     } catch(e) { return null; }
   }
