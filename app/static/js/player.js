@@ -515,9 +515,12 @@
       if (res.status === 202) {
         // Đang generate, retry sau 15 giây
         setTimeout(async function() {
+          // Check plyrInstance còn sống không
+          if (!plyrInstance || !plyrInstance.elements) return;
+
           try {
             var res2 = await fetch(url, { redirect: 'follow' });
-            if (res2.ok && plyrInstance) {
+            if (res2.ok && plyrInstance && plyrInstance.elements) {
               // res2.url = final URL sau redirect (e.g. /thumbnails/hash/index.vtt)
               plyrInstance.previewThumbnails.src     = res2.url;
               plyrInstance.previewThumbnails.enabled = true;
