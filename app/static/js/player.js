@@ -137,13 +137,10 @@
       ratio: '16:9',
     };
 
-    // Thumbnail preview — safe init, retry uses setPreviewThumbnails() API
+    // Thumbnail preview — fetch src, but init disabled (enable inside 'ready')
     var thumbSrc = await getThumbnailSrc(filePath);
     console.log('[thumbnail] init src:', thumbSrc);
-    plyrConfig.previewThumbnails = {
-      enabled: !!thumbSrc,  // true only when src ready → safe init
-      src: thumbSrc || ''   // empty string when not ready
-    };
+    plyrConfig.previewThumbnails = { enabled: false };
 
     // Captions config if subs available
     if (subs && subs.length > 0) {
@@ -154,6 +151,11 @@
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
+      // Enable thumbnails INSIDE ready — player.elements.progress exists here
+      if (thumbSrc) {
+        plyrInstance.setPreviewThumbnails({ enabled: true, src: thumbSrc });
+      }
+
       // Force invertTime — HLS attaches before Plyr, config may not apply
       setTimeout(function() {
         var timeEl = document.querySelector('.plyr__time--current');
@@ -220,13 +222,10 @@
       ratio: '16:9',
     };
 
-    // Thumbnail preview — safe init, retry uses setPreviewThumbnails() API
+    // Thumbnail preview — fetch src, but init disabled (enable inside 'ready')
     var thumbSrc = await getThumbnailSrc(filePath);
     console.log('[thumbnail] init src:', thumbSrc);
-    plyrConfig.previewThumbnails = {
-      enabled: !!thumbSrc,  // true only when src ready → safe init
-      src: thumbSrc || ''   // empty string when not ready
-    };
+    plyrConfig.previewThumbnails = { enabled: false };
 
     // Captions config if subs available
     if (subs && subs.length > 0) {
@@ -237,6 +236,11 @@
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
+      // Enable thumbnails INSIDE ready — player.elements.progress exists here
+      if (thumbSrc) {
+        plyrInstance.setPreviewThumbnails({ enabled: true, src: thumbSrc });
+      }
+
       // Force invertTime — config may not apply on direct stream
       setTimeout(function() {
         var timeEl = document.querySelector('.plyr__time--current');
@@ -539,6 +543,8 @@
           try {
             var res2 = await fetch(url, { redirect: 'follow', cache: 'no-store' });
             if (res2.ok && res2.status !== 202) {
+              // Guard: player must be ready (elements.progress exists)
+              if (!plyrInstance.ready) return;
               if (!res2.url.includes('/thumbnails/') || !res2.url.endsWith('.vtt')) {
                 console.warn('[thumbnail] retry: unexpected url:', res2.url);
                 return;
