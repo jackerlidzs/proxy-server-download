@@ -137,11 +137,12 @@
       ratio: '16:9',
     };
 
-    // Thumbnail preview — check if ready, retry if generating
+    // Thumbnail preview — always init so retry can enable later
     var thumbSrc = await getThumbnailSrc(filePath);
-    if (thumbSrc) {
-      plyrConfig.previewThumbnails = { enabled: true, src: thumbSrc };
-    }
+    plyrConfig.previewThumbnails = {
+      enabled: true,       // ALWAYS true — forces Plyr to create the plugin object
+      src: thumbSrc || ''  // empty string = plugin exists but shows nothing
+    };
 
     // Captions config if subs available
     if (subs && subs.length > 0) {
@@ -218,11 +219,12 @@
       ratio: '16:9',
     };
 
-    // Thumbnail preview — check if ready, retry if generating
+    // Thumbnail preview — always init so retry can enable later
     var thumbSrc = await getThumbnailSrc(filePath);
-    if (thumbSrc) {
-      plyrConfig.previewThumbnails = { enabled: true, src: thumbSrc };
-    }
+    plyrConfig.previewThumbnails = {
+      enabled: true,       // ALWAYS true — forces Plyr to create the plugin object
+      src: thumbSrc || ''  // empty string = plugin exists but shows nothing
+    };
 
     // Captions config if subs available
     if (subs && subs.length > 0) {
@@ -265,6 +267,10 @@
     if (window._hlsPollingInterval) {
       clearInterval(window._hlsPollingInterval);
       window._hlsPollingInterval = null;
+    }
+    if (window._thumbnailRetryInterval) {
+      clearInterval(window._thumbnailRetryInterval);
+      window._thumbnailRetryInterval = null;
     }
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
     if (hlsInstance)  { hlsInstance.destroy();  hlsInstance = null; }
@@ -513,22 +519,28 @@
       var res = await fetch(url, { redirect: 'follow' });
 
       if (res.status === 202) {
-        // Đang generate, retry sau 15 giây
-        setTimeout(async function() {
-          // Check plyrInstance còn sống không
-          if (!plyrInstance || !plyrInstance.elements) return;
-
+        // Đang generate → retry loop: mỗi 10s, tối đa 6 lần (60s)
+        var retryCount = 0;
+        var retryInterval = setInterval(async function() {
+          retryCount++;
+          if (retryCount >= 6 || !plyrInstance) {
+            clearInterval(retryInterval);
+            return;
+          }
           try {
             var res2 = await fetch(url, { redirect: 'follow' });
-            if (res2.ok && plyrInstance && plyrInstance.previewThumbnails) {
-              // res2.url = final URL sau redirect (e.g. /thumbnails/hash/index.vtt)
-              plyrInstance.previewThumbnails.src     = res2.url;
-              plyrInstance.previewThumbnails.enabled = true;
+            if (res2.ok && plyrInstance) {
+              clearInterval(retryInterval);
+              try {
+                plyrInstance.previewThumbnails.src     = res2.url;
+                plyrInstance.previewThumbnails.enabled = true;
+              } catch(e2) { console.warn('[thumbnail] update failed:', e2); }
             }
           } catch(e) {
-            console.warn('Thumbnail retry failed:', e);
+            console.warn('[thumbnail] retry failed:', e);
           }
-        }, 15000);
+        }, 10000);
+        window._thumbnailRetryInterval = retryInterval;
         return null;
       }
 
