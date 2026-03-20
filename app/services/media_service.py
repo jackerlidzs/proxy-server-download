@@ -899,7 +899,7 @@ async def generate_sprite_thumbnails(filepath: Path):
         return None
     cols = 10
     rows = math.ceil(total_frames / cols)
-    thumb_w, thumb_h = 160, 90
+    thumb_w, thumb_h = 320, 180
 
     # Generate sprite sheet with ffmpeg
     try:
