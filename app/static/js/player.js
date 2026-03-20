@@ -519,17 +519,7 @@
     try {
       var res = await fetch(url, { redirect: 'follow', cache: 'no-store' });
 
-      // Ready → validate URL is actual VTT, not API endpoint
-      if (res.ok) {
-        if (!res.url.includes('/thumbnails/') || !res.url.endsWith('.vtt')) {
-          console.warn('[thumbnail] unexpected redirect target:', res.url);
-          return null;
-        }
-        console.log('[thumbnail] ready:', res.url);
-        return res.url;
-      }
-
-      // Generating → start retry loop
+      // 202 = generating → must check BEFORE res.ok (202 is also "ok" in fetch API)
       if (res.status === 202) {
         console.log('[thumbnail] generating, starting retry loop...');
 
@@ -548,7 +538,7 @@
 
           try {
             var res2 = await fetch(url, { redirect: 'follow', cache: 'no-store' });
-            if (res2.ok) {
+            if (res2.ok && res2.status !== 202) {
               if (!res2.url.includes('/thumbnails/') || !res2.url.endsWith('.vtt')) {
                 console.warn('[thumbnail] retry: unexpected url:', res2.url);
                 return;
@@ -571,6 +561,16 @@
 
         window._thumbnailRetryInterval = retryInterval;
         return null;
+      }
+
+      // Ready (302 followed → 200) → validate URL is actual VTT
+      if (res.ok) {
+        if (!res.url.includes('/thumbnails/') || !res.url.endsWith('.vtt')) {
+          console.warn('[thumbnail] unexpected url:', res.url);
+          return null;
+        }
+        console.log('[thumbnail] ready:', res.url);
+        return res.url;
       }
 
       // 404 or other error
