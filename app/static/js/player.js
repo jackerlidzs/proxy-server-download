@@ -520,7 +520,7 @@
 
           try {
             var res2 = await fetch(url, { redirect: 'follow' });
-            if (res2.ok && plyrInstance && plyrInstance.elements) {
+            if (res2.ok && plyrInstance && plyrInstance.previewThumbnails) {
               // res2.url = final URL sau redirect (e.g. /thumbnails/hash/index.vtt)
               plyrInstance.previewThumbnails.src     = res2.url;
               plyrInstance.previewThumbnails.enabled = true;
