@@ -343,3 +343,15 @@ async def run_download(tid, url, headers, filename, conns, engine="auto", resume
             # Index file metadata (NO auto-extract)
             from services.file_service import index_file
             await index_file(DOWNLOAD_DIR / filename)
+
+            # Auto-generate thumbnail sprites for video files
+            VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts', '.m4v', '.flv'}
+            final_filepath = DOWNLOAD_DIR / filename
+            if final_filepath.suffix.lower() in VIDEO_EXTS:
+                from services.media_service import (
+                    generate_sprite_thumbnails, get_thumbnail_vtt_url
+                )
+                info = get_thumbnail_vtt_url(final_filepath)
+                if info['status'] != 'ready':  # skip if already cached
+                    asyncio.create_task(generate_sprite_thumbnails(final_filepath))
+                    print(f'[thumbnail-pregen] triggered: {final_filepath.name}')

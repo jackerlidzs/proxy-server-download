@@ -1171,7 +1171,7 @@ document.addEventListener('keydown', e => {
   if(e.key === 'F2' && fmSelected.size === 1) {
     e.preventDefault();
     const path = [...fmSelected][0];
-    fmCtxFile = path;
+    ctxTarget = path;
     ctxAction('rename');
   }
 });

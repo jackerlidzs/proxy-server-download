@@ -2,11 +2,11 @@
 Media Router - media listing, streaming, metadata, HLS transcoding
 """
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from auth import verify_key
-from config import DOWNLOAD_DIR, VIDEO_EXTS, FFMPEG_PRESET, MAX_CONCURRENT_TRANSCODE
+from config import DOWNLOAD_DIR, VIDEO_EXTS, FFMPEG_PRESET, MAX_CONCURRENT_TRANSCODE, CPU_CORES, MAX_CONCURRENT
 from services.media_service import (
     list_media, get_media_info, generate_thumbnail, extract_subtitles,
     convert_srt_to_vtt, get_hls_status, transcode_to_hls, cleanup_hls,
@@ -350,6 +350,35 @@ async def api_thumbnails(filepath: str):
     )
 
 
+@router.post("/api/media/thumbnails/pregen-all")
+async def api_pregen_all(
+    background_tasks: BackgroundTasks,
+    _=Depends(verify_key)
+):
+    """Trigger thumbnail pre-generation for all existing videos without cached thumbnails."""
+    from services.media_service import (
+        generate_sprite_thumbnails, get_thumbnail_vtt_url
+    )
+    VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts', '.m4v', '.flv'}
+    triggered, skipped = [], []
+
+    for f in DOWNLOAD_DIR.rglob('*'):
+        if f.suffix.lower() not in VIDEO_EXTS:
+            continue
+        info = get_thumbnail_vtt_url(f)
+        if info['status'] == 'ready':
+            skipped.append(f.name)
+        else:
+            background_tasks.add_task(generate_sprite_thumbnails, f)
+            triggered.append(f.name)
+
+    return {
+        "triggered": len(triggered),
+        "skipped":   len(skipped),
+        "files":     triggered
+    }
+
+
 @router.get("/api/media/subtitles/{filepath:path}")
 async def api_subtitles(filepath: str, _=Depends(verify_key)):
     """List available subtitle files for a video (external + embedded)."""
@@ -404,6 +433,28 @@ async def api_cached_subtitle(cache_hash: str, filename: str, _=Depends(verify_k
         media_type="text/vtt",
         headers={"Cache-Control": "public, max-age=86400"}
     )
+
+@router.get("/api/media/server-status")
+async def api_server_status(_=Depends(verify_key)):
+    import psutil
+    cpu = psutil.cpu_percent(interval=0.5)
+    ram = psutil.virtual_memory()
+    return {
+        "cpu_cores":       CPU_CORES,
+        "cpu_percent":     cpu,
+        "ram_total_gb":    round(ram.total / 1e9, 1),
+        "ram_used_gb":     round(ram.used   / 1e9, 1),
+        "ram_free_gb":     round(ram.available / 1e9, 1),
+        "ram_percent":     ram.percent,
+        "ffmpeg_preset":   FFMPEG_PRESET,
+        "max_concurrent":  MAX_CONCURRENT,
+        "safe_to_convert": cpu < 80 and ram.percent < 85,
+        "recommendation":  (
+            "OVERLOADED" if cpu > 80 or ram.percent > 85 else
+            "BUSY"       if cpu > 50 or ram.percent > 70 else
+            "OK"
+        )
+    }
 
 
 @router.get("/server-status")

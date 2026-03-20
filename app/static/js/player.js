@@ -67,7 +67,24 @@
       } else {
         // not_started / error / unknown → play NGAY qua direct stream
         var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
-        loadPlayerDirect(filePath, directUrl, subs);
+        await loadPlayerDirect(filePath, directUrl, subs);
+
+        // Auto-convert in background — does not block playback
+        triggerHlsConvert(filePath).then(triggered => {
+          if (!triggered) return;
+          waitUntilReady(filePath)
+            .then(() => {
+              // Show subtle toast — do NOT auto-switch stream
+              const overlay = document.getElementById('player-status-overlay');
+              const text    = document.getElementById('player-status-text');
+              if (overlay && text && plyrInstance) {
+                text.textContent = '✅ HLS sẵn sàng — mở lại để xem mượt hơn';
+                overlay.classList.remove('hidden');
+                setTimeout(() => overlay.classList.add('hidden'), 4000);
+              }
+            })
+            .catch(() => {});
+        });
       }
     },
 
@@ -173,14 +190,13 @@
 
       initResumeProgress(currentPath);
       initTouchGestures();
+      initProgressSaving(currentPath);
     });
 
     // Save volume on change
     plyrInstance.on('volumechange', function() {
       saveVolume();
     });
-
-    initProgressSaving(currentPath);
   }
 
   async function loadPlayerDirect(filePath, streamUrl, subs) {
@@ -258,14 +274,13 @@
 
       initResumeProgress(currentPath);
       initTouchGestures();
+      initProgressSaving(currentPath);
     });
 
     // Save volume on change
     plyrInstance.on('volumechange', function() {
       saveVolume();
     });
-
-    initProgressSaving(currentPath);
   }
 
   function destroyPlayer() {
@@ -448,13 +463,29 @@
 
   async function triggerHlsConvert(filePath) {
     try {
-      await fetch('/api/media/hls/' + encodeFilePath(filePath), {
-        method: 'POST',
+      // Check server load first — skip if overloaded
+      const statusRes = await fetch('/api/media/server-status', {
         headers: getAuthHeaders()
       });
+      if (statusRes.ok) {
+        const status = await statusRes.json();
+        if (status.recommendation === 'OVERLOADED') {
+          console.log('[hls-auto] server overloaded, skipping');
+          return false;
+        }
+      }
+      const res = await fetch(
+        `/api/media/hls/${encodeFilePath(filePath)}`,
+        { method: 'POST', headers: getAuthHeaders() }
+      );
+      if (res.ok) {
+        console.log('[hls-auto] triggered:', filePath);
+        return true;
+      }
     } catch(e) {
-      console.warn('Trigger convert failed:', e);
+      console.warn('[hls-auto] trigger failed:', e);
     }
+    return false;
   }
 
   function waitUntilReady(filePath) {
@@ -647,20 +678,14 @@
   function encodeFilePath(filePath) {
     return filePath
       .split('/')
-      .map(function(segment) {
-        return encodeURIComponent(segment)
-          // encodeURIComponent bỏ sót các ký tự sau — fix thủ công:
-          .replace(/'/g,  '%27')   // apostrophe  → Tom Clancy's
-          .replace(/!/g,  '%21')   // exclamation → WOW!
-          .replace(/\(/g, '%28')   // open paren  → film(2024)
-          .replace(/\)/g, '%29')   // close paren → film(2024)
-          .replace(/\*/g, '%2A'); // asterisk    → file*name
-          // Không encode: - _ . ~ (an toàn trong URL path)
-          // Tự động xử lý bởi encodeURIComponent:
-          //   Tiếng Việt, Chinese, Japanese, Korean → %XX%XX
-          //   Khoảng trắng → %20
-          //   #, ?, &, =, +, @, $ → %XX
-      })
+      .map(segment => encodeURIComponent(segment)
+        .replace(/'/g,  '%27')
+        .replace(/!/g,  '%21')
+        .replace(/\(/g, '%28')
+        .replace(/\)/g, '%29')
+        .replace(/\*/g, '%2A')
+        .replace(/~/g,  '%7E')
+      )
       .join('/');
   }
 
