@@ -266,8 +266,8 @@
       clearInterval(window._hlsPollingInterval);
       window._hlsPollingInterval = null;
     }
-    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     var videoEl = document.getElementById('player');
     if (videoEl) {
       // Remove subtitle tracks from previous session
