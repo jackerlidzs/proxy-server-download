@@ -449,6 +449,11 @@ async function extractF(path){
         if(check.zero_byte_parts&&check.zero_byte_parts.length)toast(`Empty files: ${check.zero_byte_parts.join(', ')}`,'err');
         toast(errMsg,'err');return;
       }
+      // FIX 3: Disk space warning
+      if(check.disk_enough===false){
+        const msg='⚠️ Cần '+check.disk_required_gb+' GB, còn '+check.disk_free_gb+' GB trống.\nTiếp tục?';
+        if(!confirm(msg))return;
+      }
     }catch(e){}
     if(partMatch){
       const dir=path.substring(0,path.length-name.length);
@@ -476,7 +481,7 @@ async function _doExtract(extractPath, del, archName, password){
   }catch(e){
     const errMsg=e.message||'';
     // If password error, prompt for password
-    if(errMsg.toLowerCase().includes('password')){
+    if(/wrong password|enter password|encrypted|cannot open encrypted/i.test(errMsg)){
       const pw=await dlgPrompt('🔐 Password Required','Enter archive password:','');
       if(pw)return _doExtract(extractPath, del, archName, pw);
     }
@@ -516,31 +521,31 @@ function listenExtract(jobId, reconnectCount){
   es.onerror=function(){
     es.close();
     _currentExtractES=null;
-    if(reconnectCount<3){
-      // Try reconnect — first check if job still running
-      setTimeout(async()=>{
-        try{
-          const d=await api('GET','/api/extract-tasks');
-          const tasks=d.tasks||[];
-          const job=tasks.find(t=>t.task_id===jobId);
-          if(job&&job.status==='extracting'){
-            listenExtract(jobId, reconnectCount+1);
-          }else if(job){
-            renderExtractBanner([job]);
-            setTimeout(()=>{
-              const el=document.getElementById('extractBanner');
-              if(el)el.innerHTML='';
-              rFiles();
-            },3000);
-          }
-        }catch(e){
-          toast('Extract connection lost','err');
-        }
-      },2000);
-    }else{
-      toast('Extract connection lost after 3 retries','err');
-    }
+    _tryReconnectExtract(jobId, reconnectCount);
   };
+}
+async function _tryReconnectExtract(jobId, count){
+  if(count>=3){toast('Extract connection lost after 3 retries','err');return}
+  setTimeout(async()=>{
+    try{
+      const d=await api('GET','/api/extract-tasks');
+      const tasks=d.tasks||[];
+      const job=tasks.find(t=>t.task_id===jobId);
+      if(!job)return;
+      // Already finished — show final state
+      if(job.status==='completed'||job.status==='failed'||job.status==='cancelled'){
+        renderExtractBanner([job]);
+        _currentExtractJobId=null;
+        if(job.status==='completed')setTimeout(()=>rFiles(),1500);
+        setTimeout(()=>{const el=document.getElementById('extractBanner');if(el)el.innerHTML=''},3000);
+        return;
+      }
+      // Still running — reconnect SSE
+      listenExtract(jobId, count+1);
+    }catch(e){
+      _tryReconnectExtract(jobId, count+1);
+    }
+  },2000);
 }
 async function cancelExtract(eid){
   try{

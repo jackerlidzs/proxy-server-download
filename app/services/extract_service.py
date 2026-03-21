@@ -79,29 +79,36 @@ def _calc_eta(task):
 def check_parts(filename: str, directory: Path) -> dict:
     """Check if all parts of a multi-part archive are present.
     Supports: .partN.rar, old RAR (.rar/.r00/.r01), split (.zip.001/.7z.001)
+    Also returns disk space info for the frontend.
     """
     # --- New .partN.rar format ---
     group, part = part_group(filename)
     if group:
-        return _check_rar_parts(group, directory)
-
-    # --- Old RAR format: name.rar + name.r00 + name.r01 ---
-    fn_lower = filename.lower()
-    m_old = OLD_RAR_PATTERN.match(filename)
-    if m_old or fn_lower.endswith('.rar'):
-        if m_old:
-            base_name = m_old.group(1)
+        result = _check_rar_parts(group, directory)
+    elif SPLIT_PATTERN.match(filename):
+        base_archive = SPLIT_PATTERN.match(filename).group(1)
+        result = _check_split_parts(base_archive, directory)
+    else:
+        fn_lower = filename.lower()
+        m_old = OLD_RAR_PATTERN.match(filename)
+        if m_old or fn_lower.endswith('.rar'):
+            base_name = m_old.group(1) if m_old else filename[:-4]
+            result = _check_old_rar_parts(base_name, directory)
         else:
-            base_name = filename[:-4]  # strip .rar
-        return _check_old_rar_parts(base_name, directory)
+            result = {"is_multipart": False, "complete": True, "parts": [], "missing": []}
 
-    # --- Split zip/7z: name.zip.001, name.7z.001 ---
-    m_split = SPLIT_PATTERN.match(filename)
-    if m_split:
-        base_archive = m_split.group(1)  # e.g. file.zip
-        return _check_split_parts(base_archive, directory)
+    # Add disk space info
+    try:
+        fp = directory / filename
+        archive_size = fp.stat().st_size if fp.exists() else 0
+        usage = shutil.disk_usage(str(directory))
+        result["disk_free_gb"] = round(usage.free / 1e9, 1)
+        result["disk_required_gb"] = round(archive_size * 1.1 / 1e9, 1)
+        result["disk_enough"] = usage.free > archive_size * 1.1
+    except Exception:
+        result["disk_enough"] = True  # don't block on failure
 
-    return {"is_multipart": False, "complete": True, "parts": [], "missing": []}
+    return result
 
 
 def _check_rar_parts(group: str, directory: Path) -> dict:
@@ -245,14 +252,20 @@ def _check_split_parts(base_archive: str, directory: Path) -> dict:
 
 def cancel_extract(eid: str):
     """Cancel extraction by killing subprocess."""
-    if eid in extract_tasks:
-        extract_tasks[eid].update({"status": "cancelled", "speed": "", "eta": ""})
+    task = extract_tasks.get(eid)
+    if not task:
+        return False
+    # Guard: do not cancel if already completed
+    if task.get("status") in ("completed", "failed"):
+        return False
+    task.update({"status": "cancelled", "speed": "", "eta": ""})
     proc = _extract_procs.pop(eid, None)
     if proc and proc.returncode is None:
         try:
             proc.kill()
         except Exception:
             pass
+    return True
 
 
 def _get_archive_size(fp: Path, group: str) -> int:
