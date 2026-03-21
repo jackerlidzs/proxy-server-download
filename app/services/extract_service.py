@@ -427,21 +427,43 @@ async def extract_archive(filename: str, delete_after: bool = False,
 async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
                        eid: str, group: str, delete_after: bool,
                        password: str = None, archive_format: str = ""):
-    """Background extraction task."""
+    """Background extraction task — complete routing table."""
     async with extract_semaphore:
         try:
-            # Route to appropriate handler
-            if name_lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2")):
-                result = await _extract_tar(fp, base_dir, eid)
-            elif ext == ".tar":
-                result = await _extract_tar(fp, base_dir, eid)
-            elif ext == ".gz" and not name_lower.endswith(".tar.gz"):
-                result = await _extract_gz(fp, base_dir, eid)
-            elif ext == ".bz2" and not name_lower.endswith(".tar.bz2"):
-                result = await _extract_bz2(fp, base_dir, eid)
-            else:
-                # ALL other formats: .rar, .zip, .7z, .split → unified 7z handler
+            name = fp.name.lower()
+            exts = ''.join(fp.suffixes).lower()  # e.g. ".tar.gz"
+
+            # ── RAR → 7z (best support for modern/multipart RAR) ────
+            if (ext == '.rar'
+                    or re.search(r'\.part\d+\.rar$', name)
+                    or re.search(r'\.r\d{2,3}$', name)):
                 result = await _extract_7z(fp, base_dir, eid, password)
+
+            # ── TAR variants → tar CLI (preserves permissions/symlinks) ──
+            elif (exts in ('.tar.gz', '.tar.bz2', '.tar.xz', '.tar.zst')
+                  or ext in ('.tgz', '.tbz2', '.txz', '.tar')):
+                result = await _extract_tar(fp, base_dir, eid)
+
+            # ── Standalone compressed → native tools ────────────────
+            elif ext == '.gz' and '.tar' not in name:
+                result = await _extract_gz(fp, base_dir, eid)
+            elif ext == '.bz2' and '.tar' not in name:
+                result = await _extract_bz2(fp, base_dir, eid)
+            elif ext == '.xz' and '.tar' not in name:
+                result = await _extract_xz(fp, base_dir, eid)
+
+            # ── ZIP / 7z → 7z (most reliable for these) ────────────
+            elif ext in ('.zip', '.7z'):
+                result = await _extract_7z(fp, base_dir, eid, password)
+
+            # ── Generic split (.001 .002 ...) → 7z with fallback ───
+            elif re.search(r'\.\d{3}$', name):
+                result = await _extract_split_safe(fp, base_dir, eid, password)
+
+            # ── Unsupported ─────────────────────────────────────────
+            else:
+                extract_tasks[eid].update({"status": "failed", "error": f"Unsupported format: {ext}"})
+                result = False
 
             if result and delete_after:
                 extract_tasks[eid]["progress"] = "Cleaning up archives..."
@@ -713,6 +735,88 @@ async def _extract_bz2(fp: Path, out_dir: Path, eid: str) -> bool:
     except FileNotFoundError:
         _extract_procs.pop(eid, None)
         extract_tasks[eid].update({"status": "failed", "error": "bunzip2 not found — install bzip2 on server"})
+        return False
+
+
+async def _extract_xz(fp: Path, out_dir: Path, eid: str) -> bool:
+    """Extract a single .xz file using xz -d."""
+    try:
+        import shutil as shutil_mod
+        dest_xz = out_dir / fp.name
+        shutil_mod.copy2(str(fp), str(dest_xz))
+        cmd = ["xz", "-d", "-f", str(dest_xz)]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _extract_procs[eid] = proc
+        extract_tasks[eid].update({"percent": 50, "progress": "Decompressing..."})
+        _, stderr = await proc.communicate()
+        _extract_procs.pop(eid, None)
+
+        if proc.returncode == 0:
+            elapsed = extract_tasks[eid].get("elapsed", "")
+            extract_tasks[eid].update({
+                "status": "completed", "percent": 100,
+                "progress": f"100% · Done{' in ' + elapsed if elapsed else ''}",
+                "speed": "", "eta": "",
+                "completed_at": datetime.now().isoformat()
+            })
+            return True
+        else:
+            err_msg = stderr.decode("utf-8", errors="ignore").strip() if stderr else "Decompression failed"
+            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
+            return False
+    except FileNotFoundError:
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({"status": "failed", "error": "xz not found — install xz-utils on server"})
+        return False
+
+
+async def _extract_split_safe(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
+    """Try 7z first for split archives, fallback to cat join for unknown split formats."""
+    # Try 7z first
+    success = await _extract_7z(fp, out_dir, eid, password)
+    if success:
+        return True
+
+    # Fallback: cat all parts → single file
+    extract_tasks[eid]["error"] = None
+    extract_tasks[eid]["status"] = "extracting"
+
+    stem = re.sub(r'\.\d{3}$', '', fp.name)
+    pattern = re.sub(r'\d{3}$', '*', fp.name)
+    parts = sorted(fp.parent.glob(pattern))
+    if not parts:
+        extract_tasks[eid].update({"status": "failed", "error": "No split parts found"})
+        return False
+
+    output_file = out_dir / stem
+    try:
+        with open(str(output_file), 'wb') as out:
+            for i, part in enumerate(parts):
+                pct = int((i / len(parts)) * 100)
+                extract_tasks[eid]["percent"] = pct
+                extract_tasks[eid]["current_file"] = part.name
+                extract_tasks[eid]["progress"] = f"{pct}% · Joining {part.name}"
+                with open(str(part), 'rb') as f:
+                    while True:
+                        chunk = f.read(1024 * 1024)  # 1MB chunks
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                if extract_tasks.get(eid, {}).get("status") == "cancelled":
+                    return False
+
+        elapsed = extract_tasks[eid].get("elapsed", "")
+        extract_tasks[eid].update({
+            "status": "completed", "percent": 100,
+            "progress": f"100% · Joined {len(parts)} parts" + (f" · Done in {elapsed}" if elapsed else ""),
+            "speed": "", "eta": "",
+            "completed_at": datetime.now().isoformat()
+        })
+        return True
+    except Exception as e:
+        extract_tasks[eid].update({"status": "failed", "error": str(e)})
         return False
 
 

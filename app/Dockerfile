@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install tools: aria2c, curl-impersonate, ffmpeg, 7z, zip
+# Install tools: aria2c, curl-impersonate, ffmpeg, 7z, zip, xz
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         aria2 \
@@ -13,6 +13,7 @@ RUN apt-get update && \
         p7zip-full \
         zip \
         unzip \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install curl-impersonate (Chrome version)
