@@ -425,9 +425,141 @@ async function delF(path){
   catch(e){toast(e.message,'err')}
 }
 
-// Extract (SSE-based realtime progress)
-let _currentExtractES=null;
-let _currentExtractJobId=null;
+// ═══ Extract Panel (Google Drive-style floating panel + SSE) ═══
+var ExtractPanel={
+  jobs:{},
+  jobCount:0,
+  show(){document.getElementById('extract-panel').classList.remove('hidden')},
+  close(){document.getElementById('extract-panel').classList.add('hidden')},
+  toggleCollapse(){
+    var p=document.getElementById('extract-panel');
+    p.classList.toggle('collapsed');
+    document.getElementById('ep-collapse').textContent=p.classList.contains('collapsed')?'□':'—';
+  },
+  updateHeader(){
+    var badge=document.getElementById('ep-badge');
+    var title=document.getElementById('ep-title-text');
+    var active=Object.values(this.jobs).filter(j=>j.status==='extracting').length;
+    if(active>0){
+      title.textContent='Extracting';
+      badge.textContent=active;
+      badge.style.display='';
+    }else{
+      title.textContent='Extraction complete';
+      badge.style.display='none';
+    }
+  },
+  addJob(eid,filename,dest){
+    this.jobs[eid]={status:'extracting',filename:filename,dest:dest};
+    this.jobCount++;
+    this.show();
+    this.updateHeader();
+    var body=document.getElementById('ep-body');
+    var div=document.createElement('div');
+    div.className='ep-job';div.id='ep-job-'+eid;
+    div.innerHTML=`
+      <div class="ep-job-main">
+        <div class="ep-icon">📦</div>
+        <div class="ep-info">
+          <div class="ep-name" id="ep-name-${eid}">${esc(filename)} → ${esc(dest||'')}/</div>
+          <div class="ep-sub" id="ep-sub-${eid}">Starting...</div>
+          <div class="ep-bar"><div class="ep-fill active" id="ep-fill-${eid}" style="width:0%"></div></div>
+        </div>
+        <div class="ep-act" id="ep-act-${eid}">
+          <button class="ep-cancel" onclick="ExtractPanel.cancelJob('${eid}')">✕</button>
+        </div>
+      </div>
+      <div class="ep-log-toggle" onclick="ExtractPanel.toggleLog('${eid}',this)">▸ detail log</div>
+      <div class="ep-log-box" id="ep-log-${eid}"><div>[7z] Opening: ${esc(filename)}</div></div>`;
+    body.insertBefore(div,body.firstChild);
+  },
+  updateJob(eid,data){
+    var fill=document.getElementById('ep-fill-'+eid);
+    var sub=document.getElementById('ep-sub-'+eid);
+    var act=document.getElementById('ep-act-'+eid);
+    var nameEl=document.getElementById('ep-name-'+eid);
+    if(!fill)return;
+    if(this.jobs[eid])this.jobs[eid].status=data.status||this.jobs[eid].status;
+
+    if(data.status==='extracting'){
+      var pct=data.percent||data.pct||0;
+      fill.style.width=pct+'%';
+      var info=pct+'%';
+      if(data.speed)info+=' · '+data.speed;
+      if(data.eta)info+=' · ETA '+data.eta;
+      if(data.current_file)info+=' · '+data.current_file;
+      sub.textContent=info;
+      if(data.current_file)this.appendLog(eid,'[7z] '+pct+'% - '+data.current_file);
+    }
+    if(data.status==='completed'){
+      fill.style.width='100%';
+      fill.className='ep-fill done';
+      sub.textContent='Completed'+(data.elapsed?' · Done in '+data.elapsed:'');
+      act.innerHTML='<span class="ep-chip done">done</span>';
+      if(nameEl){
+        nameEl.className='ep-name done-link';
+        nameEl.title='Open folder';
+        nameEl.textContent='✅ '+nameEl.textContent;
+        var dest=data.destination||this.jobs[eid]?.dest||'';
+        if(dest)nameEl.onclick=function(){fmGo(dest)};
+      }
+      this.appendLog(eid,'[7z] Everything is Ok','ep-log-ok');
+      this.updateHeader();
+      setTimeout(()=>rFiles(),1500);
+    }
+    if(data.status==='failed'){
+      fill.className='ep-fill error';
+      sub.textContent='Error: '+(data.error||'Unknown error');
+      act.innerHTML='<span class="ep-chip err">error</span>';
+      this.appendLog(eid,'[7z] ERROR: '+(data.error||'Unknown'),'ep-log-err');
+      this.updateHeader();
+    }
+    if(data.status==='cancelled'){
+      fill.className='ep-fill error';
+      sub.textContent='Cancelled';
+      act.innerHTML='<span class="ep-chip err">cancelled</span>';
+      this.appendLog(eid,'[7z] Cancelled','ep-log-err');
+      this.updateHeader();
+    }
+  },
+  appendLog(eid,text,cls){
+    var box=document.getElementById('ep-log-'+eid);
+    if(!box)return;
+    var d=document.createElement('div');
+    if(cls)d.className=cls;
+    d.textContent=text;
+    box.appendChild(d);
+    box.scrollTop=box.scrollHeight;
+  },
+  toggleLog(eid,el){
+    var box=document.getElementById('ep-log-'+eid);
+    if(!box)return;
+    box.classList.toggle('open');
+    el.textContent=box.classList.contains('open')?'▾ detail log':'▸ detail log';
+  },
+  cancelJob(eid){
+    api('DELETE','/api/extract-tasks/'+eid).then(()=>{
+      toast('Extraction cancelled','ok');
+    }).catch(e=>toast(e.message,'err'));
+    var fill=document.getElementById('ep-fill-'+eid);
+    var sub=document.getElementById('ep-sub-'+eid);
+    var act=document.getElementById('ep-act-'+eid);
+    if(fill)fill.className='ep-fill error';
+    if(sub)sub.textContent='Cancelled';
+    if(act)act.innerHTML='<span class="ep-chip err">cancelled</span>';
+    this.appendLog(eid,'[7z] Cancelled by user','ep-log-err');
+    if(this.jobs[eid]?.es){try{this.jobs[eid].es.close()}catch(e){}}
+    if(this.jobs[eid])this.jobs[eid].status='cancelled';
+    this.updateHeader();
+  }
+};
+// Wire panel header buttons
+document.addEventListener('DOMContentLoaded',function(){
+  document.getElementById('ep-header').addEventListener('click',function(){ExtractPanel.toggleCollapse()});
+  document.getElementById('ep-collapse').addEventListener('click',function(e){e.stopPropagation();ExtractPanel.toggleCollapse()});
+  document.getElementById('ep-close').addEventListener('click',function(e){e.stopPropagation();ExtractPanel.close()});
+});
+
 async function extractF(path){
   const name=path.split('/').pop();
   let extractPath=path;
@@ -449,7 +581,6 @@ async function extractF(path){
         if(check.zero_byte_parts&&check.zero_byte_parts.length)toast(`Empty files: ${check.zero_byte_parts.join(', ')}`,'err');
         toast(errMsg,'err');return;
       }
-      // FIX 3: Disk space warning
       if(check.disk_enough===false){
         const msg='⚠️ Cần '+check.disk_required_gb+' GB, còn '+check.disk_free_gb+' GB trống.\nTiếp tục?';
         if(!confirm(msg))return;
@@ -476,11 +607,14 @@ async function _doExtract(extractPath, del, archName, password){
     const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),body);
     const dest=r.destination||'';
     const jobId=r.task_id;
-    toast(`Extracting → ${dest||archName}`,'ok');
-    if(jobId)listenExtract(jobId);
+    if(jobId){
+      ExtractPanel.addJob(jobId, archName, dest);
+      listenExtract(jobId);
+    }else{
+      toast(`Extracting → ${dest||archName}`,'ok');
+    }
   }catch(e){
     const errMsg=e.message||'';
-    // If password error, prompt for password
     if(/wrong password|enter password|encrypted|cannot open encrypted/i.test(errMsg)){
       const pw=await dlgPrompt('🔐 Password Required','Enter archive password:','');
       if(pw)return _doExtract(extractPath, del, archName, pw);
@@ -488,113 +622,45 @@ async function _doExtract(extractPath, del, archName, password){
     toast(errMsg,'err');
   }
 }
-function listenExtract(jobId, reconnectCount){
-  reconnectCount=reconnectCount||0;
-  _currentExtractJobId=jobId;
-
-  // Close previous SSE if any
-  if(_currentExtractES){try{_currentExtractES.close()}catch(e){}}
-
-  const es=new EventSource('/api/extract/stream/'+jobId);
-  _currentExtractES=es;
-
-  es.onmessage=function(e){
-    try{
-      const data=JSON.parse(e.data);
-      renderExtractBanner([data]);
-
-      if(data.status==='completed'||data.status==='failed'||data.status==='cancelled'||data.status==='not_found'){
-        es.close();
-        _currentExtractES=null;
-        _currentExtractJobId=null;
-        // Refresh file list after completion
-        if(data.status==='completed')setTimeout(()=>rFiles(),1500);
-        // Auto-hide banner after 3s
-        setTimeout(()=>{
-          const el=document.getElementById('extractBanner');
-          if(el)el.innerHTML='';
-        },3000);
+function listenExtract(eid){
+  var reconnects=0;
+  function connect(){
+    var es=new EventSource('/api/extract/stream/'+eid);
+    if(ExtractPanel.jobs[eid])ExtractPanel.jobs[eid].es=es;
+    es.onmessage=function(e){
+      try{
+        var data=JSON.parse(e.data);
+        ExtractPanel.updateJob(eid,data);
+        if(data.status==='completed'||data.status==='failed'||data.status==='cancelled'||data.status==='not_found'){
+          es.close();
+        }
+      }catch(err){}
+    };
+    es.onerror=function(){
+      es.close();
+      if(reconnects<3){
+        reconnects++;
+        setTimeout(function(){
+          // Check if job still running before reconnect
+          api('GET','/api/extract-tasks').then(function(d){
+            var tasks=d.tasks||[];
+            var job=tasks.find(function(t){return t.task_id===eid});
+            if(!job)return;
+            if(job.status==='extracting'){connect()}
+            else{ExtractPanel.updateJob(eid,job)}
+          }).catch(function(){
+            if(reconnects<3)connect();
+            else toast('Extract connection lost after 3 retries','err');
+          });
+        },2000);
+      }else{
+        toast('Extract connection lost after 3 retries','err');
       }
-    }catch(err){}
-  };
-
-  es.onerror=function(){
-    es.close();
-    _currentExtractES=null;
-    _tryReconnectExtract(jobId, reconnectCount);
-  };
-}
-async function _tryReconnectExtract(jobId, count){
-  if(count>=3){toast('Extract connection lost after 3 retries','err');return}
-  setTimeout(async()=>{
-    try{
-      const d=await api('GET','/api/extract-tasks');
-      const tasks=d.tasks||[];
-      const job=tasks.find(t=>t.task_id===jobId);
-      if(!job)return;
-      // Already finished — show final state
-      if(job.status==='completed'||job.status==='failed'||job.status==='cancelled'){
-        renderExtractBanner([job]);
-        _currentExtractJobId=null;
-        if(job.status==='completed')setTimeout(()=>rFiles(),1500);
-        setTimeout(()=>{const el=document.getElementById('extractBanner');if(el)el.innerHTML=''},3000);
-        return;
-      }
-      // Still running — reconnect SSE
-      listenExtract(jobId, count+1);
-    }catch(e){
-      _tryReconnectExtract(jobId, count+1);
-    }
-  },2000);
-}
-async function cancelExtract(eid){
-  try{
-    await api('DELETE','/api/extract-tasks/'+eid);
-    toast('Extraction cancelled','ok');
-    if(_currentExtractES){try{_currentExtractES.close()}catch(e){}}
-    _currentExtractES=null;
-    _currentExtractJobId=null;
-  }catch(e){toast(e.message,'err')}
-}
-function renderExtractBanner(tasks){
-  let el=document.getElementById('extractBanner');
-  if(!el){
-    const c=document.getElementById('fmContent');
-    el=document.createElement('div');el.id='extractBanner';
-    c.parentNode.insertBefore(el,c);
+    };
   }
-  if(!tasks||!tasks.length){el.innerHTML='';return}
-  el.innerHTML=tasks.map(t=>{
-    const pct=t.percent||0;
-    const isActive=t.status==='extracting';
-    const ic=t.status==='completed'?'✅':t.status==='failed'?'❌':t.status==='cancelled'?'⏹':'📦';
-    const dest=t.destination?`→ 📁 ${esc(t.destination)}`:'';
-    const cancelBtn=isActive?`<button class="btn-d" onclick="cancelExtract('${t.task_id}')" style="font-size:10px;padding:2px 8px;margin-left:8px" title="Cancel">✕ Cancel</button>`:'';
-    // Status badge color
-    const sc=t.status==='completed'?'color:var(--grn)':t.status==='failed'?'color:var(--red)':t.status==='cancelled'?'color:var(--txt3)':'color:var(--pri2)';
-    // Progress info line
-    let infoLine=t.progress||'';
-    if(isActive&&t.elapsed)infoLine+=` · ⏱ ${t.elapsed}`;
-    if(isActive&&t.current_file)infoLine+=` · 📄 ${esc(t.current_file)}`;
-    // Error detail
-    const errLine=t.error?`<div style="font-size:11px;color:var(--red);margin-top:4px;word-break:break-all">⚠ ${esc(t.error)}</div>`:'';
-    // Progress bar
-    const bar=isActive||t.status==='cancelled'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;transition:width .3s;${isActive?'background:linear-gradient(90deg,var(--pri),#6a4ff0)':'background:var(--txt3)'};width:${pct}%"></div></div>`
-      :t.status==='completed'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;background:var(--grn);width:100%"></div></div>`:'';
-    return`<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:6px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;font-weight:600">${ic} ${esc(t.filename||'')} ${dest}</span>
-        <div style="display:flex;align-items:center">
-          <span style="font-size:11px;font-weight:600;${sc}">${t.status}</span>
-          ${cancelBtn}
-        </div>
-      </div>
-      ${bar}
-      <div style="font-size:11px;color:var(--txt3);margin-top:2px">${infoLine}</div>
-      ${errLine}
-    </div>`;
-  }).join('');
+  connect();
 }
+
 
 
 // Detail Panel

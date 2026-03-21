@@ -406,6 +406,21 @@ curl 'https://example.com/file2.rar' \
     </div>
   </div>
 
+  <!-- Extract Progress Panel (floating bottom-right) -->
+  <div id="extract-panel" class="ep hidden">
+    <div class="ep-header" id="ep-header">
+      <div class="ep-title">
+        <span id="ep-title-text">Extracting</span>
+        <span class="ep-badge" id="ep-badge">0</span>
+      </div>
+      <div class="ep-actions">
+        <button class="ep-ibtn" id="ep-collapse" title="Collapse">—</button>
+        <button class="ep-ibtn" id="ep-close" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="ep-body" id="ep-body"></div>
+  </div>
+
   <!-- Upload Progress Panel (floating) -->
   <div id="uploadPanel" class="upl-panel" style="display:none">
     <div class="upl-header">
