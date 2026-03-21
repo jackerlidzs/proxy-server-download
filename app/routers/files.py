@@ -339,9 +339,23 @@ async def extract_file(filename: str, request: Request, _=Depends(verify_key)):
     return result
 
 
+@router.get("/extract/stream/{eid}")
+async def extract_stream(eid: str):
+    """SSE stream for realtime extract progress. Unauthenticated — UUID is the token."""
+    from services.extract_service import extract_tasks, stream_job
+    from fastapi.responses import StreamingResponse
+    if eid not in extract_tasks:
+        raise HTTPException(404, "Extract task not found")
+    return StreamingResponse(
+        stream_job(eid),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
 @router.get("/extract-tasks")
 async def get_extract_tasks(_=Depends(verify_key)):
-    """Get extract task progress (separate from downloads)."""
+    """Get extract task progress (fallback polling endpoint)."""
     from services.extract_service import extract_tasks
     # Filter out internal fields (prefixed with _)
     tasks = [{k: v for k, v in t.items() if not k.startswith('_')} for t in extract_tasks.values()]

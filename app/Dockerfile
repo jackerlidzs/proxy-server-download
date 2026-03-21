@@ -1,10 +1,9 @@
 FROM python:3.11-slim
 
-# Install tools: aria2c, unrar, curl-impersonate, ffmpeg, 7z, zip
+# Install tools: aria2c, curl-impersonate, ffmpeg, 7z, zip
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         aria2 \
-        unrar-free \
         wget \
         ca-certificates \
         libnss3 \

@@ -1,11 +1,12 @@
 """
 Extract Service - archive extraction and compression
-Supports: .rar (multi-part), .zip, .7z, .tar.gz
-With progress tracking, cancel, ETA, and speed
+Supports: .rar (multi-part), .zip, .7z, .tar.gz, .gz, .bz2
+All extraction via 7z (p7zip-full) with realtime progress tracking
 """
 import re
 import uuid
 import time
+import json
 import shutil
 import asyncio
 from pathlib import Path
@@ -266,6 +267,32 @@ def _get_archive_size(fp: Path, group: str) -> int:
     return fp.stat().st_size if fp.exists() else 0
 
 
+def _schedule_job_cleanup(eid: str, delay: int = 3600):
+    """Auto-delete finished job from extract_tasks after delay seconds."""
+    try:
+        loop = asyncio.get_event_loop()
+        loop.call_later(delay, lambda: extract_tasks.pop(eid, None))
+    except Exception:
+        pass
+
+
+async def stream_job(eid: str):
+    """Async generator yielding SSE events for an extract job."""
+    while True:
+        job = extract_tasks.get(eid)
+        if not job:
+            yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
+            break
+
+        # Filter out internal fields
+        event = {k: v for k, v in job.items() if not k.startswith('_')}
+        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        if job.get("status") in ("completed", "failed", "cancelled"):
+            break
+        await asyncio.sleep(0.5)
+
+
 async def extract_archive(filename: str, delete_after: bool = False,
                            base_dir: Path = None, destination: str = None,
                            password: str = None) -> dict:
@@ -324,7 +351,7 @@ async def extract_archive(filename: str, delete_after: bool = False,
                 ext = fp.suffix.lower()
                 name_lower = fp.name.lower()
 
-    # Determine output directory
+    # Determine output directory (default = same dir as archive)
     if destination:
         out_dir = base_dir / destination
     else:
@@ -352,9 +379,7 @@ async def extract_archive(filename: str, delete_after: bool = False,
     try:
         disk = shutil.disk_usage(str(base_dir))
         free_space = disk.free
-        # Estimate extracted size: archive_size * 1.1 (compression ratio safety margin)
         estimated_size = int(total_size * 1.1) if total_size > 0 else 0
-        # If deleting archives after, we'll recover that space
         recoverable = total_size if delete_after else 0
         needed = estimated_size - recoverable
         if needed > 0 and needed > free_space:
@@ -374,7 +399,7 @@ async def extract_archive(filename: str, delete_after: bool = False,
         "group": group, "progress": "Starting...", "percent": 0,
         "destination": str(out_dir.relative_to(base_dir)),
         "total_size": total_size,
-        "speed": "", "eta": "", "elapsed": "",
+        "speed": "", "eta": "", "elapsed": "", "current_file": "",
         "_started_ts": time.time(),
         "created_at": datetime.now().isoformat()
     }
@@ -392,22 +417,8 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
     """Background extraction task."""
     async with extract_semaphore:
         try:
-            # Split archives (.zip.001, .7z.001) — use 7z to join+extract
-            if archive_format == "split":
-                group_lower = group.lower() if group else ""
-                if group_lower.endswith(".zip"):
-                    result = await _extract_split(fp, base_dir, eid, password, "zip")
-                elif group_lower.endswith(".7z"):
-                    result = await _extract_split(fp, base_dir, eid, password, "7z")
-                else:
-                    result = await _extract_split(fp, base_dir, eid, password, "auto")
-            elif ext == ".rar" or name_lower.endswith(".rar"):
-                result = await _extract_rar(fp, base_dir, eid, password)
-            elif ext == ".zip":
-                result = await _extract_zip(fp, base_dir, eid)
-            elif ext == ".7z":
-                result = await _extract_7z(fp, base_dir, eid)
-            elif name_lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2")):
+            # Route to appropriate handler
+            if name_lower.endswith((".tar.gz", ".tgz", ".tar.bz2", ".tbz2")):
                 result = await _extract_tar(fp, base_dir, eid)
             elif ext == ".tar":
                 result = await _extract_tar(fp, base_dir, eid)
@@ -416,8 +427,8 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
             elif ext == ".bz2" and not name_lower.endswith(".tar.bz2"):
                 result = await _extract_bz2(fp, base_dir, eid)
             else:
-                extract_tasks[eid].update({"status": "failed", "error": f"Unsupported: {ext}"})
-                return
+                # ALL other formats: .rar, .zip, .7z, .split → unified 7z handler
+                result = await _extract_7z(fp, base_dir, eid, password)
 
             if result and delete_after:
                 extract_tasks[eid]["progress"] = "Cleaning up archives..."
@@ -426,17 +437,21 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
         except Exception as e:
             if extract_tasks.get(eid, {}).get("status") != "cancelled":
                 extract_tasks[eid].update({"status": "failed", "error": str(e)})
+        finally:
+            # Schedule auto-cleanup of finished job after 1 hour
+            _schedule_job_cleanup(eid, 3600)
 
 
-async def _extract_rar(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
+async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
+    """Unified extraction via 7z — handles .rar, .zip, .7z, split archives.
+    7z auto-detects format and joins multipart archives from part1.
+    """
     try:
-        # Use stdbuf for line-buffered output (real-time progress)
-        cmd = ["stdbuf", "-oL", "unrar", "x", "-o+", "-y"]
+        cmd = ["stdbuf", "-oL", "7z", "x", "-y", f"-o{out_dir}"]
         if password:
             cmd.append(f"-p{password}")
-        else:
-            cmd.append("-p-")  # assume no password
-        cmd.extend([str(fp), str(out_dir) + "/"])
+        cmd.append(str(fp))
+
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
@@ -454,23 +469,55 @@ async def _extract_rar(fp: Path, out_dir: Path, eid: str, password: str = None) 
             if not line:
                 break
             dec = line.decode("utf-8", errors="ignore").strip()
-            if dec:
-                m = re.search(r'(\d+)%', dec)
-                if m:
-                    pct = float(m.group(1))
-                    extract_tasks[eid]["percent"] = pct
-                    _calc_eta(extract_tasks[eid])
-                    eta = extract_tasks[eid].get("eta", "")
-                    spd = extract_tasks[eid].get("speed", "")
-                    parts = [f"{pct:.0f}%"]
-                    if spd:
-                        parts.append(spd)
-                    if eta:
-                        parts.append(f"ETA {eta}")
-                    extract_tasks[eid]["progress"] = " · ".join(parts)
+            if not dec:
+                continue
+
+            # Parse 7z output — try patterns in order
+            # Pattern 1: "45% - filename.mkv"
+            m = re.search(r'(\d+)%\s*-\s*(.+)', dec)
+            if m:
+                pct = float(m.group(1))
+                current_file = m.group(2).strip()
+                extract_tasks[eid]["percent"] = pct
+                extract_tasks[eid]["current_file"] = current_file
+                _calc_eta(extract_tasks[eid])
+                eta = extract_tasks[eid].get("eta", "")
+                spd = extract_tasks[eid].get("speed", "")
+                parts = [f"{pct:.0f}%"]
+                if spd:
+                    parts.append(spd)
+                if eta:
+                    parts.append(f"ETA {eta}")
+                extract_tasks[eid]["progress"] = " · ".join(parts)
+                continue
+
+            # Pattern 2: "45%" (percent only)
+            m2 = re.search(r'(\d+)%', dec)
+            if m2:
+                pct = float(m2.group(1))
+                extract_tasks[eid]["percent"] = pct
+                _calc_eta(extract_tasks[eid])
+                eta = extract_tasks[eid].get("eta", "")
+                spd = extract_tasks[eid].get("speed", "")
+                parts = [f"{pct:.0f}%"]
+                if spd:
+                    parts.append(spd)
+                if eta:
+                    parts.append(f"ETA {eta}")
+                extract_tasks[eid]["progress"] = " · ".join(parts)
+                continue
+
+            # Pattern 3: "Everything is Ok" → done
+            if "everything is ok" in dec.lower():
+                extract_tasks[eid]["percent"] = 100
+                continue
+
+            # Skip unrecognized lines
+
             if extract_tasks.get(eid, {}).get("status") == "cancelled":
                 proc.kill()
                 break
+
         await proc.wait()
         await stderr_task
         _extract_procs.pop(eid, None)
@@ -488,20 +535,34 @@ async def _extract_rar(fp: Path, out_dir: Path, eid: str, password: str = None) 
             })
             return True
         else:
-            # Extract actual error from stderr
+            # Check for known error patterns in stderr
             err_msg = "Extraction failed"
             for line in reversed(stderr_lines):
-                if line and not line.startswith("UNRAR") and not line.startswith("Extracting"):
+                if not line:
+                    continue
+                ll = line.lower()
+                if "wrong password" in ll or "password" in ll:
+                    err_msg = "Wrong password or archive is password-protected"
+                    break
+                if "error" in ll:
+                    err_msg = line[:200]
+                    break
+                if line:
                     err_msg = line[:200]
                     break
             extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
             return False
+
     except FileNotFoundError:
         # stdbuf not available, try without it
         try:
+            cmd2 = ["7z", "x", "-y", f"-o{out_dir}"]
+            if password:
+                cmd2.append(f"-p{password}")
+            cmd2.append(str(fp))
+
             proc = await asyncio.create_subprocess_exec(
-                "unrar", "x", "-o+", "-y", str(fp), str(out_dir) + "/",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                *cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             _extract_procs[eid] = proc
             stderr_data = []
@@ -517,20 +578,30 @@ async def _extract_rar(fp: Path, out_dir: Path, eid: str, password: str = None) 
                     break
                 dec = line.decode("utf-8", errors="ignore").strip()
                 if dec:
-                    m = re.search(r'(\d+)%', dec)
+                    m = re.search(r'(\d+)%\s*-\s*(.+)', dec)
                     if m:
                         pct = float(m.group(1))
                         extract_tasks[eid]["percent"] = pct
+                        extract_tasks[eid]["current_file"] = m.group(2).strip()
                         _calc_eta(extract_tasks[eid])
-                        eta = extract_tasks[eid].get("eta", "")
-                        spd = extract_tasks[eid].get("speed", "")
-                        parts_l = [f"{pct:.0f}%"]
-                        if spd: parts_l.append(spd)
-                        if eta: parts_l.append(f"ETA {eta}")
-                        extract_tasks[eid]["progress"] = " · ".join(parts_l)
+                    else:
+                        m2 = re.search(r'(\d+)%', dec)
+                        if m2:
+                            pct = float(m2.group(1))
+                            extract_tasks[eid]["percent"] = pct
+                            _calc_eta(extract_tasks[eid])
+                    eta = extract_tasks[eid].get("eta", "")
+                    spd = extract_tasks[eid].get("speed", "")
+                    p = extract_tasks[eid].get("percent", 0)
+                    parts_l = [f"{p:.0f}%"]
+                    if spd: parts_l.append(spd)
+                    if eta: parts_l.append(f"ETA {eta}")
+                    extract_tasks[eid]["progress"] = " · ".join(parts_l)
+
                 if extract_tasks.get(eid, {}).get("status") == "cancelled":
                     proc.kill()
                     break
+
             await proc.wait()
             await err_t
             _extract_procs.pop(eid, None)
@@ -548,212 +619,13 @@ async def _extract_rar(fp: Path, out_dir: Path, eid: str, password: str = None) 
             else:
                 err_msg = "Extraction failed"
                 for line in reversed(stderr_data):
-                    if line: err_msg = line[:200]; break
-                extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
-                return False
-        except FileNotFoundError:
-            _extract_procs.pop(eid, None)
-            extract_tasks[eid].update({"status": "failed", "error": "unrar not found — install it on server"})
-            return False
-
-
-async def _extract_zip(fp: Path, out_dir: Path, eid: str) -> bool:
-    try:
-        # Count total files for progress
-        total_files = 0
-        try:
-            lp = await asyncio.create_subprocess_exec(
-                "unzip", "-l", str(fp),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            out, _ = await asyncio.wait_for(lp.communicate(), timeout=30)
-            for line in out.decode(errors="ignore").split("\n"):
-                line = line.strip()
-                if line and not line.startswith("---") and not line.startswith("Archive") and not line.startswith("Length"):
-                    m = re.match(r'^\s*\d+', line)
-                    if m:
-                        total_files += 1
-        except Exception:
-            pass
-
-        proc = await asyncio.create_subprocess_exec(
-            "unzip", "-o", str(fp), "-d", str(out_dir),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _extract_procs[eid] = proc
-        extracted = 0
-        stderr_lines = []
-
-        async def read_stderr():
-            async for line in proc.stderr:
-                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
-
-        stderr_task = asyncio.create_task(read_stderr())
-
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            dec = line.decode("utf-8", errors="ignore").strip()
-            if dec and ("inflating:" in dec or "extracting:" in dec):
-                extracted += 1
-                if total_files > 0:
-                    pct = min(99, extracted / total_files * 100)
-                    extract_tasks[eid]["percent"] = pct
-                    _calc_eta(extract_tasks[eid])
-                    eta = extract_tasks[eid].get("eta", "")
-                    spd = extract_tasks[eid].get("speed", "")
-                    parts = [f"{pct:.0f}%", f"{extracted}/{total_files} files"]
-                    if spd:
-                        parts.append(spd)
-                    if eta:
-                        parts.append(f"ETA {eta}")
-                    extract_tasks[eid]["progress"] = " · ".join(parts)
-                else:
-                    extract_tasks[eid]["progress"] = f"{extracted} files extracted"
-            if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                proc.kill()
-                break
-        await proc.wait()
-        await stderr_task
-        _extract_procs.pop(eid, None)
-
-        if extract_tasks.get(eid, {}).get("status") == "cancelled":
-            return False
-
-        if proc.returncode == 0:
-            elapsed = extract_tasks[eid].get("elapsed", "")
-            extract_tasks[eid].update({
-                "status": "completed", "percent": 100,
-                "progress": f"100% · {extracted} files · Done in {elapsed}" if elapsed else f"100% · {extracted} files",
-                "speed": "", "eta": "",
-                "completed_at": datetime.now().isoformat()
-            })
-            return True
-        else:
-            err_msg = "Extraction failed"
-            for line in reversed(stderr_lines):
-                if line: err_msg = line[:200]; break
-            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
-            return False
-    except FileNotFoundError:
-        _extract_procs.pop(eid, None)
-        extract_tasks[eid].update({"status": "failed", "error": "unzip not found — install it on server"})
-        return False
-
-
-async def _extract_7z(fp: Path, out_dir: Path, eid: str) -> bool:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "stdbuf", "-oL", "7z", "x", "-y", f"-o{out_dir}", str(fp),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _extract_procs[eid] = proc
-        stderr_lines = []
-
-        async def read_stderr():
-            async for line in proc.stderr:
-                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
-
-        stderr_task = asyncio.create_task(read_stderr())
-
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            dec = line.decode("utf-8", errors="ignore").strip()
-            if dec:
-                m = re.search(r'(\d+)%', dec)
-                if m:
-                    pct = float(m.group(1))
-                    extract_tasks[eid]["percent"] = pct
-                    _calc_eta(extract_tasks[eid])
-                    eta = extract_tasks[eid].get("eta", "")
-                    spd = extract_tasks[eid].get("speed", "")
-                    parts = [f"{pct:.0f}%"]
-                    if spd:
-                        parts.append(spd)
-                    if eta:
-                        parts.append(f"ETA {eta}")
-                    extract_tasks[eid]["progress"] = " · ".join(parts)
-            if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                proc.kill()
-                break
-        await proc.wait()
-        await stderr_task
-        _extract_procs.pop(eid, None)
-
-        if extract_tasks.get(eid, {}).get("status") == "cancelled":
-            return False
-
-        if proc.returncode == 0:
-            elapsed = extract_tasks[eid].get("elapsed", "")
-            extract_tasks[eid].update({
-                "status": "completed", "percent": 100,
-                "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
-                "speed": "", "eta": "",
-                "completed_at": datetime.now().isoformat()
-            })
-            return True
-        else:
-            err_msg = "Extraction failed"
-            for line in reversed(stderr_lines):
-                if line: err_msg = line[:200]; break
-            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
-            return False
-    except FileNotFoundError:
-        # stdbuf not available, try without it
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "7z", "x", "-y", f"-o{out_dir}", str(fp),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            _extract_procs[eid] = proc
-            stderr_data = []
-
-            async def read_err():
-                async for line in proc.stderr:
-                    stderr_data.append(line.decode("utf-8", errors="ignore").strip())
-
-            err_t = asyncio.create_task(read_err())
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                dec = line.decode("utf-8", errors="ignore").strip()
-                if dec:
-                    m = re.search(r'(\d+)%', dec)
-                    if m:
-                        pct = float(m.group(1))
-                        extract_tasks[eid]["percent"] = pct
-                        _calc_eta(extract_tasks[eid])
-                        eta = extract_tasks[eid].get("eta", "")
-                        spd = extract_tasks[eid].get("speed", "")
-                        parts_l = [f"{pct:.0f}%"]
-                        if spd: parts_l.append(spd)
-                        if eta: parts_l.append(f"ETA {eta}")
-                        extract_tasks[eid]["progress"] = " · ".join(parts_l)
-                if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                    proc.kill()
-                    break
-            await proc.wait()
-            await err_t
-            _extract_procs.pop(eid, None)
-            if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                return False
-            if proc.returncode == 0:
-                elapsed = extract_tasks[eid].get("elapsed", "")
-                extract_tasks[eid].update({
-                    "status": "completed", "percent": 100,
-                    "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
-                    "speed": "", "eta": "",
-                    "completed_at": datetime.now().isoformat()
-                })
-                return True
-            else:
-                err_msg = "Extraction failed"
-                for line in reversed(stderr_data):
-                    if line: err_msg = line[:200]; break
+                    if line:
+                        ll = line.lower()
+                        if "wrong password" in ll or "password" in ll:
+                            err_msg = "Wrong password or archive is password-protected"
+                            break
+                        err_msg = line[:200]
+                        break
                 extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
                 return False
         except FileNotFoundError:
@@ -828,81 +700,6 @@ async def _extract_bz2(fp: Path, out_dir: Path, eid: str) -> bool:
     except FileNotFoundError:
         _extract_procs.pop(eid, None)
         extract_tasks[eid].update({"status": "failed", "error": "bunzip2 not found — install bzip2 on server"})
-        return False
-
-
-
-async def _extract_split(fp: Path, out_dir: Path, eid: str,
-                          password: str = None, fmt: str = "auto") -> bool:
-    """Extract split archives (.zip.001, .7z.001) using 7z."""
-    try:
-        cmd = ["7z", "x", "-y", f"-o{out_dir}"]
-        if password:
-            cmd.append(f"-p{password}")
-        cmd.append(str(fp))
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _extract_procs[eid] = proc
-        stderr_lines = []
-
-        async def read_stderr():
-            async for line in proc.stderr:
-                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
-
-        stderr_task = asyncio.create_task(read_stderr())
-
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            dec = line.decode("utf-8", errors="ignore").strip()
-            if dec:
-                m = re.search(r'(\d+)%', dec)
-                if m:
-                    pct = float(m.group(1))
-                    extract_tasks[eid]["percent"] = pct
-                    _calc_eta(extract_tasks[eid])
-                    eta = extract_tasks[eid].get("eta", "")
-                    spd = extract_tasks[eid].get("speed", "")
-                    parts = [f"{pct:.0f}%"]
-                    if spd:
-                        parts.append(spd)
-                    if eta:
-                        parts.append(f"ETA {eta}")
-                    extract_tasks[eid]["progress"] = " · ".join(parts)
-            if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                proc.kill()
-                break
-        await proc.wait()
-        await stderr_task
-        _extract_procs.pop(eid, None)
-
-        if extract_tasks.get(eid, {}).get("status") == "cancelled":
-            return False
-
-        if proc.returncode == 0:
-            elapsed = extract_tasks[eid].get("elapsed", "")
-            extract_tasks[eid].update({
-                "status": "completed", "percent": 100,
-                "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
-                "speed": "", "eta": "",
-                "completed_at": datetime.now().isoformat()
-            })
-            return True
-        else:
-            err_msg = "Extraction failed"
-            for line in reversed(stderr_lines):
-                if line and "ERROR" in line.upper():
-                    err_msg = line[:200]
-                    break
-            if any("wrong password" in l.lower() or "password" in l.lower() for l in stderr_lines):
-                err_msg = "Wrong password or archive is password-protected"
-            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
-            return False
-    except FileNotFoundError:
-        _extract_procs.pop(eid, None)
-        extract_tasks[eid].update({"status": "failed", "error": "7z (p7zip) not found — install p7zip-full on server"})
         return False
 
 

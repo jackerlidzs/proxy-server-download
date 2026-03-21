@@ -425,8 +425,9 @@ async function delF(path){
   catch(e){toast(e.message,'err')}
 }
 
-// Extract
-let _extPollId=null;
+// Extract (SSE-based realtime progress)
+let _currentExtractES=null;
+let _currentExtractJobId=null;
 async function extractF(path){
   const name=path.split('/').pop();
   let extractPath=path;
@@ -469,8 +470,9 @@ async function _doExtract(extractPath, del, archName, password){
     if(password)body.password=password;
     const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),body);
     const dest=r.destination||'';
+    const jobId=r.task_id;
     toast(`Extracting → ${dest||archName}`,'ok');
-    startExtractPoll();
+    if(jobId)listenExtract(jobId);
   }catch(e){
     const errMsg=e.message||'';
     // If password error, prompt for password
@@ -481,28 +483,73 @@ async function _doExtract(extractPath, del, archName, password){
     toast(errMsg,'err');
   }
 }
-function startExtractPoll(){
-  if(_extPollId)return;
-  renderExtractBanner();
-  _extPollId=setInterval(async()=>{
+function listenExtract(jobId, reconnectCount){
+  reconnectCount=reconnectCount||0;
+  _currentExtractJobId=jobId;
+
+  // Close previous SSE if any
+  if(_currentExtractES){try{_currentExtractES.close()}catch(e){}}
+
+  const es=new EventSource('/api/extract/stream/'+jobId);
+  _currentExtractES=es;
+
+  es.onmessage=function(e){
     try{
-      const d=await api('GET','/api/extract-tasks');
-      const tasks=d.tasks||[];
-      const active=tasks.filter(t=>t.status==='extracting');
-      renderExtractBanner(tasks);
-      if(!active.length){
-        clearInterval(_extPollId);_extPollId=null;
+      const data=JSON.parse(e.data);
+      renderExtractBanner([data]);
+
+      if(data.status==='completed'||data.status==='failed'||data.status==='cancelled'||data.status==='not_found'){
+        es.close();
+        _currentExtractES=null;
+        _currentExtractJobId=null;
+        // Refresh file list after completion
+        if(data.status==='completed')setTimeout(()=>rFiles(),1500);
+        // Auto-hide banner after 3s
         setTimeout(()=>{
           const el=document.getElementById('extractBanner');
           if(el)el.innerHTML='';
-          rFiles();
         },3000);
       }
-    }catch(e){clearInterval(_extPollId);_extPollId=null}
-  },1000);
+    }catch(err){}
+  };
+
+  es.onerror=function(){
+    es.close();
+    _currentExtractES=null;
+    if(reconnectCount<3){
+      // Try reconnect — first check if job still running
+      setTimeout(async()=>{
+        try{
+          const d=await api('GET','/api/extract-tasks');
+          const tasks=d.tasks||[];
+          const job=tasks.find(t=>t.task_id===jobId);
+          if(job&&job.status==='extracting'){
+            listenExtract(jobId, reconnectCount+1);
+          }else if(job){
+            renderExtractBanner([job]);
+            setTimeout(()=>{
+              const el=document.getElementById('extractBanner');
+              if(el)el.innerHTML='';
+              rFiles();
+            },3000);
+          }
+        }catch(e){
+          toast('Extract connection lost','err');
+        }
+      },2000);
+    }else{
+      toast('Extract connection lost after 3 retries','err');
+    }
+  };
 }
 async function cancelExtract(eid){
-  try{await api('DELETE','/api/extract-tasks/'+eid);toast('Extraction cancelled','ok')}catch(e){toast(e.message,'err')}
+  try{
+    await api('DELETE','/api/extract-tasks/'+eid);
+    toast('Extraction cancelled','ok');
+    if(_currentExtractES){try{_currentExtractES.close()}catch(e){}}
+    _currentExtractES=null;
+    _currentExtractJobId=null;
+  }catch(e){toast(e.message,'err')}
 }
 function renderExtractBanner(tasks){
   let el=document.getElementById('extractBanner');
@@ -523,6 +570,7 @@ function renderExtractBanner(tasks){
     // Progress info line
     let infoLine=t.progress||'';
     if(isActive&&t.elapsed)infoLine+=` · ⏱ ${t.elapsed}`;
+    if(isActive&&t.current_file)infoLine+=` · 📄 ${esc(t.current_file)}`;
     // Error detail
     const errLine=t.error?`<div style="font-size:11px;color:var(--red);margin-top:4px;word-break:break-all">⚠ ${esc(t.error)}</div>`:'';
     // Progress bar
@@ -530,7 +578,7 @@ function renderExtractBanner(tasks){
       :t.status==='completed'?`<div style="background:var(--bg2);border-radius:4px;height:6px;margin:6px 0 4px;overflow:hidden"><div style="height:100%;border-radius:4px;background:var(--grn);width:100%"></div></div>`:'';
     return`<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;font-weight:600">${ic} ${esc(t.filename)} ${dest}</span>
+        <span style="font-size:12px;font-weight:600">${ic} ${esc(t.filename||'')} ${dest}</span>
         <div style="display:flex;align-items:center">
           <span style="font-size:11px;font-weight:600;${sc}">${t.status}</span>
           ${cancelBtn}
@@ -542,6 +590,7 @@ function renderExtractBanner(tasks){
     </div>`;
   }).join('');
 }
+
 
 // Detail Panel
 async function showDetail(path){
