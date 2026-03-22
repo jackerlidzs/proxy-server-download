@@ -309,6 +309,15 @@ async def do_restore_version(filepath: str, version: int, _=Depends(verify_key))
 
 
 # --- Extract & Compress ---
+@router.post("/extract/check/{filename:path}")
+async def check_archive_parts(filename: str, _=Depends(verify_key)):
+    """Check if all parts of a multi-part archive are present."""
+    fp = DOWNLOAD_DIR / filename
+    if not fp.exists():
+        raise HTTPException(404)
+    return check_parts(fp.name, fp.parent)
+
+
 @router.post("/extract/{filename:path}")
 async def extract_file(filename: str, request: Request, _=Depends(verify_key)):
     fp = safe_path(filename)
@@ -378,14 +387,6 @@ async def cancel_extract_task(eid: str, _=Depends(verify_key)):
     cancel_extract(eid)
     return {"message": f"Cancelled {eid}"}
 
-
-@router.post("/extract/check/{filename:path}")
-async def check_archive_parts(filename: str, _=Depends(verify_key)):
-    """Check if all parts of a multi-part archive are present."""
-    fp = DOWNLOAD_DIR / filename
-    if not fp.exists():
-        raise HTTPException(404)
-    return check_parts(fp.name, fp.parent)
 
 
 @router.post("/compress")
