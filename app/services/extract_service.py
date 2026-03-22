@@ -576,7 +576,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
     7z auto-detects format and joins multipart archives from part1.
     """
     try:
-        cmd = ["stdbuf", "-oL", "7z", "x", "-y", f"-o{out_dir}"]
+        cmd = ["stdbuf", "-oL", "7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
         if password:
             cmd.append(f"-p{password}")
         cmd.append(str(fp))
@@ -602,8 +602,8 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                 continue
 
             # Parse 7z output — try patterns in order
-            # Pattern 1: "45% - filename.mkv"
-            m = re.search(r'(\d+)%\s*-\s*(.+)', dec)
+            # Pattern 1: "45% 2 - filename.mkv" (7z -bsp1 format)
+            m = re.search(r'(\d+)%\s*\d*\s*-\s*(.+)', dec)
             if m:
                 pct = float(m.group(1))
                 current_file = m.group(2).strip()
@@ -685,7 +685,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
     except FileNotFoundError:
         # stdbuf not available, try without it
         try:
-            cmd2 = ["7z", "x", "-y", f"-o{out_dir}"]
+            cmd2 = ["7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
             if password:
                 cmd2.append(f"-p{password}")
             cmd2.append(str(fp))
@@ -707,7 +707,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                     break
                 dec = line.decode("utf-8", errors="ignore").strip()
                 if dec:
-                    m = re.search(r'(\d+)%\s*-\s*(.+)', dec)
+                    m = re.search(r'(\d+)%\s*\d*\s*-\s*(.+)', dec)
                     if m:
                         pct = float(m.group(1))
                         extract_tasks[eid]["percent"] = pct
