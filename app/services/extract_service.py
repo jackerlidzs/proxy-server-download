@@ -578,7 +578,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
     IMPORTANT: 7z progress output uses \\r (carriage return) NOT \\n.
     We must read raw bytes and split on \\r to get realtime progress.
     """
-    cmd = ["7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
+    cmd = ["7z", "x", "-y", "-bsp2", f"-o{out_dir}"]
     if password:
         cmd.append(f"-p{password}")
     cmd.append(str(fp))
