@@ -520,21 +520,9 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
     """Background extraction task — complete routing table."""
     async with extract_semaphore:
         try:
-            # ── Verify integrity before extracting ──────────────
-            verify = await verify_archive(fp, eid, password=password)
-            if not verify["ok"]:
-                extract_tasks[eid].update({
-                    "status": "failed",
-                    "error": f"Archive corrupt: {verify['error']}",
-                    "speed": "", "eta": ""
-                })
-                _schedule_job_cleanup(eid, delay=300)
-                return
-
-            # Verify passed → proceed with extraction
-            extract_tasks[eid]["status"] = "extracting"
-            extract_tasks[eid]["progress"] = "Starting extraction..."
-            extract_tasks[eid]["_started_ts"] = time.time()
+            # verify_archive() removed — was blocking event loop for large
+            # archives (5-10 min on 20GB), causing progress stuck at 0%.
+            # CRC errors are detected during extraction via stderr parsing.
 
             name = fp.name.lower()
             exts = ''.join(fp.suffixes).lower()  # e.g. ".tar.gz"
