@@ -585,16 +585,16 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _extract_procs[eid] = proc
-        stderr_lines = []
+        stdout_lines = []
 
-        async def read_stderr():
-            async for line in proc.stderr:
-                stderr_lines.append(line.decode("utf-8", errors="ignore").strip())
+        async def read_stdout():
+            async for line in proc.stdout:
+                stdout_lines.append(line.decode("utf-8", errors="ignore").strip())
 
-        stderr_task = asyncio.create_task(read_stderr())
+        stdout_task = asyncio.create_task(read_stdout())
 
         while True:
-            line = await proc.stdout.readline()
+            line = await proc.stderr.readline()
             if not line:
                 break
             dec = line.decode("utf-8", errors="ignore").strip()
@@ -648,7 +648,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                 break
 
         await proc.wait()
-        await stderr_task
+        await stdout_task
         _extract_procs.pop(eid, None)
 
         if extract_tasks.get(eid, {}).get("status") == "cancelled":
@@ -664,9 +664,9 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
             })
             return True
         else:
-            # Check for known error patterns in stderr
+            # Check for known error patterns in stdout
             err_msg = "Extraction failed"
-            for line in reversed(stderr_lines):
+            for line in reversed(stdout_lines):
                 if not line:
                     continue
                 ll = line.lower()
@@ -694,15 +694,15 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                 *cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             _extract_procs[eid] = proc
-            stderr_data = []
+            stdout_data = []
 
-            async def read_err():
-                async for line in proc.stderr:
-                    stderr_data.append(line.decode("utf-8", errors="ignore").strip())
+            async def read_out():
+                async for line in proc.stdout:
+                    stdout_data.append(line.decode("utf-8", errors="ignore").strip())
 
-            err_t = asyncio.create_task(read_err())
+            out_t = asyncio.create_task(read_out())
             while True:
-                line = await proc.stdout.readline()
+                line = await proc.stderr.readline()
                 if not line:
                     break
                 dec = line.decode("utf-8", errors="ignore").strip()
@@ -732,7 +732,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                     break
 
             await proc.wait()
-            await err_t
+            await out_t
             _extract_procs.pop(eid, None)
             if extract_tasks.get(eid, {}).get("status") == "cancelled":
                 return False
@@ -747,7 +747,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                 return True
             else:
                 err_msg = "Extraction failed"
-                for line in reversed(stderr_data):
+                for line in reversed(stdout_data):
                     if line:
                         ll = line.lower()
                         if "wrong password" in ll or "password" in ll:
