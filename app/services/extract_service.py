@@ -574,30 +574,66 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
 async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
     """Unified extraction via 7z — handles .rar, .zip, .7z, split archives.
     7z auto-detects format and joins multipart archives from part1.
-    """
-    try:
-        cmd = ["stdbuf", "-oL", "7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
-        if password:
-            cmd.append(f"-p{password}")
-        cmd.append(str(fp))
 
+    IMPORTANT: 7z progress output uses \\r (carriage return) NOT \\n.
+    We must read raw bytes and split on \\r to get realtime progress.
+    """
+    cmd = ["7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
+    if password:
+        cmd.append(f"-p{password}")
+    cmd.append(str(fp))
+
+    try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        _extract_procs[eid] = proc
-        stdout_lines = []
+    except FileNotFoundError:
+        _extract_procs.pop(eid, None)
+        extract_tasks[eid].update({
+            "status": "failed",
+            "error": "7z not found — install p7zip-full on server"
+        })
+        return False
 
-        async def read_stdout():
-            async for line in proc.stdout:
-                stdout_lines.append(line.decode("utf-8", errors="ignore").strip())
+    _extract_procs[eid] = proc
+    stdout_lines = []
 
-        stdout_task = asyncio.create_task(read_stdout())
+    # Read stdout in background (file listing + error messages)
+    async def read_stdout():
+        async for line in proc.stdout:
+            stdout_lines.append(line.decode("utf-8", errors="ignore").strip())
 
-        while True:
-            line = await proc.stderr.readline()
-            if not line:
-                break
-            dec = line.decode("utf-8", errors="ignore").strip()
+    stdout_task = asyncio.create_task(read_stdout())
+
+    # Read stderr with chunk-based reader — 7z uses \r for progress
+    # readline() waits for \n which never comes during progress updates
+    buffer = b""
+    while True:
+        chunk = await proc.stderr.read(4096)
+        if not chunk:
+            break
+
+        buffer += chunk
+
+        # Split on \r or \n to get individual progress lines
+        while b'\r' in buffer or b'\n' in buffer:
+            # Find earliest delimiter
+            r_pos = buffer.find(b'\r')
+            n_pos = buffer.find(b'\n')
+            if r_pos == -1:
+                r_pos = len(buffer)
+            if n_pos == -1:
+                n_pos = len(buffer)
+            pos = min(r_pos, n_pos)
+
+            line_bytes = buffer[:pos]
+            # Handle \r\n as single delimiter
+            if pos < len(buffer) - 1 and buffer[pos:pos + 2] == b'\r\n':
+                buffer = buffer[pos + 2:]
+            else:
+                buffer = buffer[pos + 1:]
+
+            dec = line_bytes.decode("utf-8", errors="ignore").strip()
             if not dec:
                 continue
 
@@ -641,126 +677,48 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                 extract_tasks[eid]["percent"] = 100
                 continue
 
-            # Skip unrecognized lines
-
-            if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                proc.kill()
-                break
-
-        await proc.wait()
-        await stdout_task
-        _extract_procs.pop(eid, None)
-
+        # Check cancel between chunks
         if extract_tasks.get(eid, {}).get("status") == "cancelled":
-            return False
+            proc.kill()
+            break
 
-        if proc.returncode == 0:
-            elapsed = extract_tasks[eid].get("elapsed", "")
-            extract_tasks[eid].update({
-                "status": "completed", "percent": 100,
-                "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
-                "speed": "", "eta": "",
-                "completed_at": datetime.now().isoformat()
-            })
-            return True
-        else:
-            # Check for known error patterns in stdout
-            err_msg = "Extraction failed"
-            for line in reversed(stdout_lines):
-                if not line:
-                    continue
-                ll = line.lower()
-                if "wrong password" in ll or "password" in ll:
-                    err_msg = "Wrong password or archive is password-protected"
-                    break
-                if "error" in ll:
-                    err_msg = line[:200]
-                    break
-                if line:
-                    err_msg = line[:200]
-                    break
-            extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
-            return False
+    await proc.wait()
+    await stdout_task
+    _extract_procs.pop(eid, None)
 
-    except FileNotFoundError:
-        # stdbuf not available, try without it
-        try:
-            cmd2 = ["7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
-            if password:
-                cmd2.append(f"-p{password}")
-            cmd2.append(str(fp))
+    if extract_tasks.get(eid, {}).get("status") == "cancelled":
+        return False
 
-            proc = await asyncio.create_subprocess_exec(
-                *cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            _extract_procs[eid] = proc
-            stdout_data = []
-
-            async def read_out():
-                async for line in proc.stdout:
-                    stdout_data.append(line.decode("utf-8", errors="ignore").strip())
-
-            out_t = asyncio.create_task(read_out())
-            while True:
-                line = await proc.stderr.readline()
-                if not line:
-                    break
-                dec = line.decode("utf-8", errors="ignore").strip()
-                if dec:
-                    m = re.search(r'(\d+)%\s*\d*\s*-\s*(.+)', dec)
-                    if m:
-                        pct = float(m.group(1))
-                        extract_tasks[eid]["percent"] = pct
-                        extract_tasks[eid]["current_file"] = m.group(2).strip()
-                        _calc_eta(extract_tasks[eid])
-                    else:
-                        m2 = re.search(r'(\d+)%', dec)
-                        if m2:
-                            pct = float(m2.group(1))
-                            extract_tasks[eid]["percent"] = pct
-                            _calc_eta(extract_tasks[eid])
-                    eta = extract_tasks[eid].get("eta", "")
-                    spd = extract_tasks[eid].get("speed", "")
-                    p = extract_tasks[eid].get("percent", 0)
-                    parts_l = [f"{p:.0f}%"]
-                    if spd: parts_l.append(spd)
-                    if eta: parts_l.append(f"ETA {eta}")
-                    extract_tasks[eid]["progress"] = " · ".join(parts_l)
-
-                if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                    proc.kill()
-                    break
-
-            await proc.wait()
-            await out_t
-            _extract_procs.pop(eid, None)
-            if extract_tasks.get(eid, {}).get("status") == "cancelled":
-                return False
-            if proc.returncode == 0:
-                elapsed = extract_tasks[eid].get("elapsed", "")
-                extract_tasks[eid].update({
-                    "status": "completed", "percent": 100,
-                    "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
-                    "speed": "", "eta": "",
-                    "completed_at": datetime.now().isoformat()
-                })
-                return True
-            else:
-                err_msg = "Extraction failed"
-                for line in reversed(stdout_data):
-                    if line:
-                        ll = line.lower()
-                        if "wrong password" in ll or "password" in ll:
-                            err_msg = "Wrong password or archive is password-protected"
-                            break
-                        err_msg = line[:200]
-                        break
-                extract_tasks[eid].update({"status": "failed", "error": err_msg, "speed": "", "eta": ""})
-                return False
-        except FileNotFoundError:
-            _extract_procs.pop(eid, None)
-            extract_tasks[eid].update({"status": "failed", "error": "7z not found — install p7zip-full on server"})
-            return False
+    if proc.returncode == 0:
+        elapsed = extract_tasks[eid].get("elapsed", "")
+        extract_tasks[eid].update({
+            "status": "completed", "percent": 100,
+            "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
+            "speed": "", "eta": "",
+            "completed_at": datetime.now().isoformat()
+        })
+        return True
+    else:
+        # Check for known error patterns in stdout
+        err_msg = "Extraction failed"
+        for line in reversed(stdout_lines):
+            if not line:
+                continue
+            ll = line.lower()
+            if "wrong password" in ll or "password" in ll:
+                err_msg = "Wrong password or archive is password-protected"
+                break
+            if "error" in ll:
+                err_msg = line[:200]
+                break
+            if line:
+                err_msg = line[:200]
+                break
+        extract_tasks[eid].update({
+            "status": "failed", "error": err_msg,
+            "speed": "", "eta": ""
+        })
+        return False
 
 
 async def _extract_gz(fp: Path, out_dir: Path, eid: str) -> bool:
