@@ -575,7 +575,7 @@ async function extractF(path){
   if(partMatch||oldRarMatch||splitMatch){
     isMultipart=true;
     try{
-      const check=await api('POST','/api/extract/check/'+encodeURIComponent(path));
+      const check=await api('POST','/api/extract/check/'+path.split('/').map(encodeURIComponent).join('/'));
       if(check.is_multipart&&!check.complete){
         const errMsg=check.error||`Missing parts: ${(check.missing_files||[]).join(', ')}`;
         if(check.zero_byte_parts&&check.zero_byte_parts.length)toast(`Empty files: ${check.zero_byte_parts.join(', ')}`,'err');
@@ -604,7 +604,7 @@ async function _doExtract(extractPath, del, archName, password){
   try{
     const body={delete_after:del};
     if(password)body.password=password;
-    const r=await api('POST','/api/extract/'+encodeURIComponent(extractPath),body);
+    const r=await api('POST','/api/extract/'+extractPath.split('/').map(encodeURIComponent).join('/'),body);
     const dest=r.destination||'';
     const jobId=r.task_id;
     if(jobId){

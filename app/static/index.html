@@ -408,14 +408,16 @@ curl 'https://example.com/file2.rar' \
 
   <!-- Extract Progress Panel (floating bottom-right) -->
   <div id="extract-panel" class="ep hidden">
-    <div class="ep-header" id="ep-header">
+    <div class="ep-header" id="ep-header" onclick="ExtractPanel.toggleCollapse()">
       <div class="ep-title">
         <span id="ep-title-text">Extracting</span>
         <span class="ep-badge" id="ep-badge">0</span>
       </div>
       <div class="ep-actions">
-        <button class="ep-ibtn" id="ep-collapse" title="Collapse">—</button>
-        <button class="ep-ibtn" id="ep-close" title="Close">✕</button>
+        <button class="ep-ibtn" id="ep-collapse" title="Collapse"
+          onclick="event.stopPropagation();ExtractPanel.toggleCollapse()">—</button>
+        <button class="ep-ibtn" id="ep-close" title="Close"
+          onclick="event.stopPropagation();ExtractPanel.close()">✕</button>
       </div>
     </div>
     <div class="ep-body" id="ep-body"></div>
