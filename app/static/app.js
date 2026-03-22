@@ -481,7 +481,14 @@ var ExtractPanel={
     if(!fill)return;
     if(this.jobs[eid])this.jobs[eid].status=data.status||this.jobs[eid].status;
 
+    if(data.status==='verifying'){
+      if(fill){fill.style.width='100%';fill.style.opacity='0.4';fill.className='ep-fill active';fill.style.animation='ep-pulse 1.5s ease-in-out infinite'}
+      if(sub)sub.innerHTML='<span class="ep-spinner"></span> Verifying integrity...';
+      this.appendLog(eid,'[7z] Testing archive integrity...');
+      return;
+    }
     if(data.status==='extracting'){
+      if(fill){fill.style.opacity='1';fill.style.animation=''}
       var pct=data.percent||data.pct||0;
       fill.style.width=pct+'%';
       var info=pct+'%';
@@ -540,6 +547,7 @@ var ExtractPanel={
   cancelJob(eid){
     api('DELETE','/api/extract-tasks/'+eid).then(()=>{
       toast('Extraction cancelled','ok');
+      if(typeof rFiles==='function')rFiles();
     }).catch(e=>toast(e.message,'err'));
     var fill=document.getElementById('ep-fill-'+eid);
     var sub=document.getElementById('ep-sub-'+eid);

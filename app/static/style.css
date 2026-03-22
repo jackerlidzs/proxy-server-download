@@ -2497,3 +2497,6 @@ body::before {
 .ep-log-box.open{display:block}
 .ep-log-ok{color:var(--grn)}
 .ep-log-err{color:var(--red)}
+
+@keyframes ep-pulse{0%,100%{opacity:.4}50%{opacity:.9}}
+.ep-spinner{display:inline-block;width:9px;height:9px;border:1.5px solid rgba(255,255,255,.3);border-top-color:#378ADD;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:4px}

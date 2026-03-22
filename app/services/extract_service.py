@@ -265,6 +265,21 @@ def cancel_extract(eid: str):
             proc.kill()
         except Exception:
             pass
+
+    # Delete corrupt output file/folder
+    destination = task.get("destination")
+    if destination:
+        dest_path = DOWNLOAD_DIR / destination
+        try:
+            if dest_path.is_dir():
+                shutil.rmtree(str(dest_path), ignore_errors=True)
+                print(f"[cancel] Deleted corrupt output dir: {dest_path}")
+            elif dest_path.is_file():
+                dest_path.unlink(missing_ok=True)
+                print(f"[cancel] Deleted corrupt output file: {dest_path}")
+        except Exception as e:
+            print(f"[cancel] Cleanup error: {e}")
+
     return True
 
 
@@ -289,20 +304,95 @@ def _schedule_job_cleanup(eid: str, delay: int = 3600):
         pass
 
 
+# Formats that don't support reliable test mode — skip verify
+_SKIP_VERIFY_EXTS = {'.gz', '.bz2', '.xz', '.tgz', '.tbz2', '.txz', '.tar'}
+_SKIP_VERIFY_SUFFIXES = ('.tar.gz', '.tar.bz2', '.tar.xz', '.tar.zst')
+
+
+async def verify_archive(filepath: Path, eid: str,
+                          password: str = None) -> dict:
+    """Test archive integrity before extraction.
+    Uses 7z t (test mode) — reads archive, writes nothing to disk.
+    Returns: { ok: bool, error: str|None, crc_errors: list }
+    """
+    name = filepath.name.lower()
+    ext = filepath.suffix.lower()
+    exts = ''.join(filepath.suffixes).lower()
+
+    # Skip verify for formats that don't support test mode
+    if ext in _SKIP_VERIFY_EXTS or exts in _SKIP_VERIFY_SUFFIXES:
+        return {"ok": True, "error": None, "crc_errors": []}
+
+    # Update task status to verifying
+    if eid in extract_tasks:
+        extract_tasks[eid]["status"] = "verifying"
+        extract_tasks[eid]["progress"] = "Verifying integrity..."
+        extract_tasks[eid]["percent"] = 0
+
+    try:
+        # 7z t works for .rar, .zip, .7z, split — universal
+        cmd = ["7z", "t", "-y"]
+        if password:
+            cmd.append(f"-p{password}")
+        cmd.append(str(filepath))
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        output = (stdout.decode("utf-8", errors="replace") +
+                  stderr.decode("utf-8", errors="replace"))
+
+        # Check for CRC / corruption errors
+        crc_errors = re.findall(
+            r'CRC failed|checksum error|corrupt|bad archive|'
+            r'wrong password|password incorrect|cannot open encrypted',
+            output, re.IGNORECASE
+        )
+
+        if proc.returncode != 0 or crc_errors:
+            error_msg = (crc_errors[0] if crc_errors
+                         else f"Verification failed (exit {proc.returncode})")
+            return {"ok": False, "error": error_msg, "crc_errors": crc_errors}
+
+        return {"ok": True, "error": None, "crc_errors": []}
+
+    except FileNotFoundError:
+        return {"ok": False, "error": "7z not found — install p7zip-full on server",
+                "crc_errors": []}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "crc_errors": []}
+
+
 async def stream_job(eid: str):
     """Async generator yielding SSE events for an extract job."""
     while True:
         job = extract_tasks.get(eid)
         if not job:
             yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
-            break
+            return
 
-        # Filter out internal fields
-        event = {k: v for k, v in job.items() if not k.startswith('_')}
-        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        # Map backend fields → frontend expected fields
+        status = job.get("status", "extracting")
+        if status == "completed": status = "done"
+        if status == "failed":    status = "error"
+
+        payload = {
+            "status":  status,
+            "pct":     job.get("percent", 0),        # percent → pct
+            "speed":   job.get("speed", ""),
+            "eta":     job.get("eta", ""),
+            "file":    job.get("current_file", ""),   # current_file → file
+            "elapsed": job.get("elapsed", ""),
+            "message": job.get("error", ""),
+        }
+        yield f"data: {json.dumps(payload)}\n\n"
 
         if job.get("status") in ("completed", "failed", "cancelled"):
-            break
+            return
+
         await asyncio.sleep(0.5)
 
 
@@ -430,6 +520,22 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
     """Background extraction task — complete routing table."""
     async with extract_semaphore:
         try:
+            # ── Verify integrity before extracting ──────────────
+            verify = await verify_archive(fp, eid, password=password)
+            if not verify["ok"]:
+                extract_tasks[eid].update({
+                    "status": "failed",
+                    "error": f"Archive corrupt: {verify['error']}",
+                    "speed": "", "eta": ""
+                })
+                _schedule_job_cleanup(eid, delay=300)
+                return
+
+            # Verify passed → proceed with extraction
+            extract_tasks[eid]["status"] = "extracting"
+            extract_tasks[eid]["progress"] = "Starting extraction..."
+            extract_tasks[eid]["_started_ts"] = time.time()
+
             name = fp.name.lower()
             exts = ''.join(fp.suffixes).lower()  # e.g. ".tar.gz"
 
