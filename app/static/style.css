@@ -2480,9 +2480,10 @@ body::before {
 .ep-sub{font-size:11px;color:var(--txt3);margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ep-bar{height:3px;background:var(--bg4);border-radius:99px;overflow:hidden}
 .ep-fill{height:100%;border-radius:99px;transition:width .4s ease}
-.ep-fill.active{background:linear-gradient(90deg,var(--pri),var(--cyn))}
-.ep-fill.done{background:var(--grn)}
-.ep-fill.error{background:var(--red)}
+.ep-fill.active{background:#378ADD;background:linear-gradient(90deg,#378ADD,#5ba3e8);animation:ep-shimmer 2s ease-in-out infinite}
+.ep-fill.done{background:#639922}
+.ep-fill.error{background:#E24B4A}
+.ep-fill.cancelled{background:#888}
 
 .ep-act{flex-shrink:0;margin-top:2px}
 .ep-cancel{font-size:11px;color:var(--txt3);background:none;border:none;cursor:pointer;padding:3px 6px;border-radius:6px;transition:.15s}
@@ -2498,5 +2499,6 @@ body::before {
 .ep-log-ok{color:var(--grn)}
 .ep-log-err{color:var(--red)}
 
+@keyframes ep-shimmer{0%,100%{opacity:1}50%{opacity:0.8}}
 @keyframes ep-pulse{0%,100%{opacity:.4}50%{opacity:.9}}
 .ep-spinner{display:inline-block;width:9px;height:9px;border:1.5px solid rgba(255,255,255,.3);border-top-color:#378ADD;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:4px}

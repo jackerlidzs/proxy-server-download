@@ -75,7 +75,7 @@ function updateUserUI(){
     el.innerHTML=`${badge} <button class="tb-btn" onclick="logout()" title="Logout" style="font-size:14px;padding:4px 8px">🚪</button>`;
   }
 }
-function init(){health();rAll();rFiles();rMedia();startPoll();updateUserUI()}
+function init(){health();rAll();rFiles();rMedia();startPoll();updateUserUI();restoreExtractJobs()}
 function startPoll(){if(poll)clearInterval(poll);poll=setInterval(()=>{rAll();health()},hasAct?1500:5000)}
 
 async function api(m,p,b){
@@ -426,15 +426,37 @@ async function delF(path){
 }
 
 // ═══ Extract Panel (Google Drive-style floating panel + SSE) ═══
+// localStorage helpers for persist across refresh
+function saveExtractJob(eid,filename,dest){
+  try{var jobs=JSON.parse(localStorage.getItem('ep_jobs')||'{}');jobs[eid]={filename:filename,dest:dest};localStorage.setItem('ep_jobs',JSON.stringify(jobs))}catch(e){}
+}
+function removeExtractJob(eid){
+  try{var jobs=JSON.parse(localStorage.getItem('ep_jobs')||'{}');delete jobs[eid];localStorage.setItem('ep_jobs',JSON.stringify(jobs))}catch(e){}
+}
+function notifyExtractDone(filename){
+  if(document.visibilityState==='visible')return;
+  if(!('Notification' in window))return;
+  if(Notification.permission==='granted'){
+    new Notification('Extraction complete',{body:filename+' extracted successfully',icon:'/static/favicon.ico'});
+  }else if(Notification.permission!=='denied'){
+    Notification.requestPermission().then(function(p){
+      if(p==='granted')new Notification('Extraction complete',{body:filename+' extracted successfully',icon:'/static/favicon.ico'});
+    });
+  }
+}
 var ExtractPanel={
   jobs:{},
   jobCount:0,
   show(){document.getElementById('extract-panel').classList.remove('hidden')},
   close(){document.getElementById('extract-panel').classList.add('hidden')},
   toggleCollapse(){
-    var p=document.getElementById('extract-panel');
-    p.classList.toggle('collapsed');
-    document.getElementById('ep-collapse').textContent=p.classList.contains('collapsed')?'□':'—';
+    var panel=document.getElementById('extract-panel');
+    var body=document.getElementById('ep-body');
+    var btn=document.getElementById('ep-collapse');
+    if(!panel)return;
+    var isCollapsed=panel.classList.toggle('collapsed');
+    if(body)body.style.display=isCollapsed?'none':'';
+    if(btn)btn.textContent=isCollapsed?'□':'—';
   },
   updateHeader(){
     var badge=document.getElementById('ep-badge');
@@ -449,11 +471,36 @@ var ExtractPanel={
       badge.style.display='none';
     }
   },
+  clearDoneJobs(){
+    var self=this;
+    Object.keys(this.jobs).forEach(function(eid){
+      var j=self.jobs[eid];
+      if(['done','completed','error','failed','cancelled'].includes(j.status)){
+        var row=document.getElementById('ep-job-'+eid);
+        if(row)row.remove();
+        delete self.jobs[eid];
+        removeExtractJob(eid);
+      }
+    });
+    this.jobCount=Object.keys(this.jobs).length;
+    this.updateHeader();
+  },
   addJob(eid,filename,dest){
+    // Clear stale done jobs before adding new one
+    this.clearDoneJobs();
+    // Cancel auto-close timer if running
+    if(window._panelAutoCloseTimer){
+      clearInterval(window._panelAutoCloseTimer);
+      window._panelAutoCloseTimer=null;
+      var titleEl=document.getElementById('ep-title-text');
+      if(titleEl)titleEl.textContent='Extracting';
+    }
     this.jobs[eid]={status:'extracting',filename:filename,dest:dest};
     this.jobCount++;
     this.show();
     this.updateHeader();
+    // Persist to localStorage
+    saveExtractJob(eid,filename,dest);
     var body=document.getElementById('ep-body');
     var div=document.createElement('div');
     div.className='ep-job';div.id='ep-job-'+eid;
@@ -481,10 +528,23 @@ var ExtractPanel={
     if(!fill)return;
     if(this.jobs[eid])this.jobs[eid].status=data.status||this.jobs[eid].status;
 
+    // Sync log_lines from server
+    if(data.log_lines&&data.log_lines.length){
+      var box=document.getElementById('ep-log-'+eid);
+      if(box){
+        var currentCount=box.children.length;
+        for(var i=currentCount;i<data.log_lines.length;i++){
+          var d=document.createElement('div');
+          d.textContent=data.log_lines[i];
+          box.appendChild(d);
+        }
+        box.scrollTop=box.scrollHeight;
+      }
+    }
+
     if(data.status==='verifying'){
       if(fill){fill.style.width='100%';fill.style.opacity='0.4';fill.className='ep-fill active';fill.style.animation='ep-pulse 1.5s ease-in-out infinite'}
       if(sub)sub.innerHTML='<span class="ep-spinner"></span> Verifying integrity...';
-      this.appendLog(eid,'[7z] Testing archive integrity...');
       return;
     }
     if(data.status==='extracting'){
@@ -494,11 +554,10 @@ var ExtractPanel={
       var info=pct+'%';
       if(data.speed)info+=' · '+data.speed;
       if(data.eta)info+=' · ETA '+data.eta;
-      if(data.current_file)info+=' · '+data.current_file;
+      if(data.current_file||data.file)info+=' · '+(data.current_file||data.file);
       sub.textContent=info;
-      if(data.current_file)this.appendLog(eid,'[7z] '+pct+'% - '+data.current_file);
     }
-    if(data.status==='completed'){
+    if(data.status==='done'||data.status==='completed'){
       fill.style.width='100%';
       fill.className='ep-fill done';
       sub.textContent='Completed'+(data.elapsed?' · Done in '+data.elapsed:'');
@@ -512,22 +571,48 @@ var ExtractPanel={
       }
       this.appendLog(eid,'[7z] Everything is Ok','ep-log-ok');
       this.updateHeader();
+      removeExtractJob(eid);
+      notifyExtractDone(data.filename||this.jobs[eid]?.filename||eid);
       setTimeout(()=>rFiles(),1500);
+      this._checkAutoClose();
     }
-    if(data.status==='failed'){
+    if(data.status==='error'||data.status==='failed'){
       fill.className='ep-fill error';
-      sub.textContent='Error: '+(data.error||'Unknown error');
+      sub.textContent='Error: '+(data.message||data.error||'Unknown error');
       act.innerHTML='<span class="ep-chip err">error</span>';
-      this.appendLog(eid,'[7z] ERROR: '+(data.error||'Unknown'),'ep-log-err');
+      this.appendLog(eid,'[7z] ERROR: '+(data.message||data.error||'Unknown'),'ep-log-err');
       this.updateHeader();
+      removeExtractJob(eid);
+      this._checkAutoClose();
     }
     if(data.status==='cancelled'){
-      fill.className='ep-fill error';
+      fill.className='ep-fill cancelled';
       sub.textContent='Cancelled';
       act.innerHTML='<span class="ep-chip err">cancelled</span>';
       this.appendLog(eid,'[7z] Cancelled','ep-log-err');
       this.updateHeader();
+      removeExtractJob(eid);
+      this._checkAutoClose();
     }
+  },
+  _checkAutoClose(){
+    var allDone=Object.values(this.jobs).every(function(j){
+      return j.status==='done'||j.status==='completed'||j.status==='error'||j.status==='failed'||j.status==='cancelled';
+    });
+    if(!allDone||!Object.keys(this.jobs).length)return;
+    var countdown=5;
+    var titleEl=document.getElementById('ep-title-text');
+    if(window._panelAutoCloseTimer)clearInterval(window._panelAutoCloseTimer);
+    window._panelAutoCloseTimer=setInterval(function(){
+      countdown--;
+      if(titleEl)titleEl.textContent='Closing in '+countdown+'s';
+      if(countdown<=0){
+        clearInterval(window._panelAutoCloseTimer);
+        window._panelAutoCloseTimer=null;
+        ExtractPanel.close();
+        ExtractPanel.clearDoneJobs();
+      }
+    },1000);
   },
   appendLog(eid,text,cls){
     var box=document.getElementById('ep-log-'+eid);
@@ -552,12 +637,13 @@ var ExtractPanel={
     var fill=document.getElementById('ep-fill-'+eid);
     var sub=document.getElementById('ep-sub-'+eid);
     var act=document.getElementById('ep-act-'+eid);
-    if(fill)fill.className='ep-fill error';
+    if(fill)fill.className='ep-fill cancelled';
     if(sub)sub.textContent='Cancelled';
     if(act)act.innerHTML='<span class="ep-chip err">cancelled</span>';
     this.appendLog(eid,'[7z] Cancelled by user','ep-log-err');
     if(this.jobs[eid]?.es){try{this.jobs[eid].es.close()}catch(e){}}
     if(this.jobs[eid])this.jobs[eid].status='cancelled';
+    removeExtractJob(eid);
     this.updateHeader();
   }
 };
@@ -567,6 +653,37 @@ document.addEventListener('DOMContentLoaded',function(){
   document.getElementById('ep-collapse').addEventListener('click',function(e){e.stopPropagation();ExtractPanel.toggleCollapse()});
   document.getElementById('ep-close').addEventListener('click',function(e){e.stopPropagation();ExtractPanel.close()});
 });
+
+// Restore extract jobs from localStorage on page load
+function restoreExtractJobs(){
+  try{
+    var jobs=JSON.parse(localStorage.getItem('ep_jobs')||'{}');
+    var eids=Object.keys(jobs);
+    if(!eids.length)return;
+    // Check server for active jobs
+    api('GET','/api/extract-tasks').then(function(d){
+      var tasks=d.tasks||[];
+      var taskMap={};
+      tasks.forEach(function(t){taskMap[t.task_id]=t});
+      eids.forEach(function(eid){
+        var saved=jobs[eid];
+        var server=taskMap[eid];
+        if(server&&server.status==='extracting'){
+          // Job still running — re-add and reconnect
+          ExtractPanel.addJob(eid,saved.filename,saved.dest);
+          listenExtract(eid);
+        }else if(server){
+          // Job finished while we were away — show final state
+          ExtractPanel.addJob(eid,saved.filename,saved.dest);
+          ExtractPanel.updateJob(eid,server);
+        }else{
+          // Job not found on server — clean up
+          removeExtractJob(eid);
+        }
+      });
+    }).catch(function(){});
+  }catch(e){}
+}
 
 async function extractF(path){
   const name=path.split('/').pop();

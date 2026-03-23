@@ -380,13 +380,15 @@ async def stream_job(eid: str):
         if status == "failed":    status = "error"
 
         payload = {
-            "status":  status,
-            "pct":     job.get("percent", 0),        # percent → pct
-            "speed":   job.get("speed", ""),
-            "eta":     job.get("eta", ""),
-            "file":    job.get("current_file", ""),   # current_file → file
-            "elapsed": job.get("elapsed", ""),
-            "message": job.get("error", ""),
+            "status":      status,
+            "pct":         job.get("percent", 0),
+            "speed":       job.get("speed", ""),
+            "eta":         job.get("eta", ""),
+            "file":        job.get("current_file", ""),
+            "elapsed":     job.get("elapsed", ""),
+            "message":     job.get("error", ""),
+            "destination": job.get("destination", ""),
+            "log_lines":   job.get("log_lines", []),
         }
         yield f"data: {json.dumps(payload)}\n\n"
 
@@ -503,6 +505,7 @@ async def extract_archive(filename: str, delete_after: bool = False,
         "destination": str(out_dir.relative_to(base_dir)),
         "total_size": total_size,
         "speed": "", "eta": "", "elapsed": "", "current_file": "",
+        "log_lines": [f"[7z] Opening: {fp.name}"],
         "_started_ts": time.time(),
         "created_at": datetime.now().isoformat()
     }
@@ -607,6 +610,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         """Monitor output dir size every 1.5s to calculate real-time progress."""
         last_size = 0
         last_time = time.time()
+        last_milestone = -1  # Track 10% milestones for log_lines
         while extract_tasks.get(eid, {}).get("status") == "extracting":
             await asyncio.sleep(1.5)
             try:
@@ -651,7 +655,12 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                     parts.append(f"ETA {eta}")
                 extract_tasks[eid]["progress"] = " · ".join(parts)
 
-                if pct > 0 and int(pct) % 10 == 0:
+                # Log milestones every 10%
+                milestone = int(pct) // 10
+                if milestone > last_milestone and milestone > 0:
+                    last_milestone = milestone
+                    log = extract_tasks[eid].get("log_lines", [])
+                    log.append(f"[7z] {milestone * 10}% — {human_size(current_size)} / {human_size(total_size)}")
                     print(f"[7z-extract] MONITOR: {pct:.0f}% ({human_size(current_size)}/{human_size(total_size)})", flush=True)
 
     # Start progress monitor in parallel
@@ -698,6 +707,8 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
 
     if proc.returncode == 0:
         elapsed = extract_tasks[eid].get("elapsed", "")
+        log = extract_tasks[eid].get("log_lines", [])
+        log.append("[7z] Everything is Ok")
         extract_tasks[eid].update({
             "status": "completed", "percent": 100,
             "progress": f"100% · Done in {elapsed}" if elapsed else "100%",
@@ -721,6 +732,8 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                 err_msg = line[:200]
                 break
         print(f"[7z-extract] FAILED: {err_msg}", flush=True)
+        log = extract_tasks[eid].get("log_lines", [])
+        log.append(f"[7z] ERROR: {err_msg}")
         extract_tasks[eid].update({
             "status": "failed", "error": err_msg,
             "speed": "", "eta": ""
