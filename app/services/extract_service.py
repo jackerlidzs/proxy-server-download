@@ -573,19 +573,22 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
 
 async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
     """Unified extraction via 7z — handles .rar, .zip, .7z, split archives.
-    7z auto-detects format and joins multipart archives from part1.
 
-    IMPORTANT: 7z progress output uses \\r (carriage return) NOT \\n.
-    We must read raw bytes and split on \\r to get realtime progress.
+    Uses -bsp1 + stderr=STDOUT to merge ALL output into one pipe.
+    Reads chunks and splits on \r for realtime progress.
     """
-    cmd = ["7z", "x", "-y", "-bsp2", f"-o{out_dir}"]
+    cmd = ["7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
     if password:
         cmd.append(f"-p{password}")
     cmd.append(str(fp))
 
+    print(f"[7z-extract] CMD: {' '.join(cmd)}", flush=True)
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT  # Merge ALL output into stdout
         )
     except FileNotFoundError:
         _extract_procs.pop(eid, None)
@@ -596,20 +599,14 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         return False
 
     _extract_procs[eid] = proc
-    stdout_lines = []
+    all_lines = []  # Collect all output for error detection
+    progress_count = 0
 
-    # Read stdout in background (file listing + error messages)
-    async def read_stdout():
-        async for line in proc.stdout:
-            stdout_lines.append(line.decode("utf-8", errors="ignore").strip())
-
-    stdout_task = asyncio.create_task(read_stdout())
-
-    # Read stderr with chunk-based reader — 7z uses \r for progress
-    # readline() waits for \n which never comes during progress updates
+    # Read merged stdout+stderr with chunk-based reader
+    # 7z uses \r for progress updates, not \n
     buffer = b""
     while True:
-        chunk = await proc.stderr.read(4096)
+        chunk = await proc.stdout.read(4096)
         if not chunk:
             break
 
@@ -637,12 +634,21 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
             if not dec:
                 continue
 
+            all_lines.append(dec)
+
+            # Debug: log first 10 lines and periodic progress
+            if len(all_lines) <= 10:
+                print(f"[7z-extract] line {len(all_lines)}: {dec[:120]}", flush=True)
+
             # Parse 7z output — try patterns in order
-            # Pattern 1: "45% 2 - filename.mkv" (7z -bsp1 format)
+            # Pattern 1: "45% 2 - filename.mkv" or "45% - filename.mkv"
             m = re.search(r'(\d+)%\s*\d*\s*-\s*(.+)', dec)
             if m:
                 pct = float(m.group(1))
                 current_file = m.group(2).strip()
+                progress_count += 1
+                if progress_count <= 3 or progress_count % 20 == 0:
+                    print(f"[7z-extract] PROGRESS: {pct:.0f}% - {current_file[:60]}", flush=True)
                 extract_tasks[eid]["percent"] = pct
                 extract_tasks[eid]["current_file"] = current_file
                 _calc_eta(extract_tasks[eid])
@@ -683,8 +689,10 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
             break
 
     await proc.wait()
-    await stdout_task
     _extract_procs.pop(eid, None)
+
+    print(f"[7z-extract] DONE: exit={proc.returncode}, "
+          f"lines={len(all_lines)}, progress_updates={progress_count}", flush=True)
 
     if extract_tasks.get(eid, {}).get("status") == "cancelled":
         return False
@@ -699,9 +707,9 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         })
         return True
     else:
-        # Check for known error patterns in stdout
+        # Check for known error patterns
         err_msg = "Extraction failed"
-        for line in reversed(stdout_lines):
+        for line in reversed(all_lines):
             if not line:
                 continue
             ll = line.lower()
@@ -714,6 +722,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
             if line:
                 err_msg = line[:200]
                 break
+        print(f"[7z-extract] FAILED: {err_msg}", flush=True)
         extract_tasks[eid].update({
             "status": "failed", "error": err_msg,
             "speed": "", "eta": ""
