@@ -636,9 +636,8 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
 
             all_lines.append(dec)
 
-            # Debug: log first 10 lines and periodic progress
-            if len(all_lines) <= 10:
-                print(f"[7z-extract] line {len(all_lines)}: {dec[:120]}", flush=True)
+            # Debug: log ALL lines to diagnose progress format
+            print(f"[7z-extract] line {len(all_lines)}: {dec[:200]}", flush=True)
 
             # Parse 7z output — try patterns in order
             # Pattern 1: "45% 2 - filename.mkv" or "45% - filename.mkv"
