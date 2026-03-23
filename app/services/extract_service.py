@@ -574,10 +574,10 @@ async def _run_extract(fp: Path, ext: str, name_lower: str, base_dir: Path,
 async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -> bool:
     """Unified extraction via 7z — handles .rar, .zip, .7z, split archives.
 
-    Uses -bsp1 + stderr=STDOUT to merge ALL output into one pipe.
-    Reads chunks and splits on \r for realtime progress.
+    Progress is monitored via output directory file size, NOT 7z output.
+    7z buffers progress when piped (not a TTY), making stdout parsing unreliable.
     """
-    cmd = ["7z", "x", "-y", "-bsp1", f"-o{out_dir}"]
+    cmd = ["7z", "x", "-y", f"-o{out_dir}"]
     if password:
         cmd.append(f"-p{password}")
     cmd.append(str(fp))
@@ -588,7 +588,7 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT  # Merge ALL output into stdout
+            stderr=asyncio.subprocess.STDOUT
         )
     except FileNotFoundError:
         _extract_procs.pop(eid, None)
@@ -599,99 +599,99 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         return False
 
     _extract_procs[eid] = proc
-    all_lines = []  # Collect all output for error detection
-    progress_count = 0
+    all_lines = []
+    total_size = extract_tasks[eid].get("total_size", 0)
 
-    # Read merged stdout+stderr with chunk-based reader
-    # 7z uses \r for progress updates, not \n
+    # --- File-size-based progress monitor ---
+    async def _monitor_progress():
+        """Monitor output dir size every 1.5s to calculate real-time progress."""
+        last_size = 0
+        last_time = time.time()
+        while extract_tasks.get(eid, {}).get("status") == "extracting":
+            await asyncio.sleep(1.5)
+            try:
+                current_size = sum(
+                    f.stat().st_size
+                    for f in out_dir.rglob('*')
+                    if f.is_file()
+                )
+            except Exception:
+                continue
+
+            if total_size > 0:
+                pct = min(99, (current_size / total_size) * 100)
+                extract_tasks[eid]["percent"] = round(pct, 1)
+
+                # Speed calculation
+                now = time.time()
+                dt = now - last_time
+                if dt > 0.5:
+                    speed_bytes = (current_size - last_size) / dt
+                    if speed_bytes > 0:
+                        extract_tasks[eid]["speed"] = human_size(speed_bytes) + "/s"
+                    last_size = current_size
+                    last_time = now
+
+                # ETA calculation
+                started = extract_tasks[eid].get("_started_ts", 0)
+                if started:
+                    elapsed = time.time() - started
+                    extract_tasks[eid]["elapsed"] = fmt_time(elapsed)
+                    if pct > 0:
+                        eta_secs = (elapsed / pct) * (100 - pct)
+                        extract_tasks[eid]["eta"] = fmt_time(eta_secs)
+
+                # Build progress string
+                parts = [f"{pct:.0f}%"]
+                spd = extract_tasks[eid].get("speed", "")
+                eta = extract_tasks[eid].get("eta", "")
+                if spd:
+                    parts.append(spd)
+                if eta:
+                    parts.append(f"ETA {eta}")
+                extract_tasks[eid]["progress"] = " · ".join(parts)
+
+                if pct > 0 and int(pct) % 10 == 0:
+                    print(f"[7z-extract] MONITOR: {pct:.0f}% ({human_size(current_size)}/{human_size(total_size)})", flush=True)
+
+    # Start progress monitor in parallel
+    monitor_task = asyncio.create_task(_monitor_progress())
+
+    # --- Read 7z output (for error detection only) ---
     buffer = b""
     while True:
         chunk = await proc.stdout.read(4096)
         if not chunk:
             break
-
         buffer += chunk
-
-        # Split on \r or \n to get individual progress lines
         while b'\r' in buffer or b'\n' in buffer:
-            # Find earliest delimiter
             r_pos = buffer.find(b'\r')
             n_pos = buffer.find(b'\n')
-            if r_pos == -1:
-                r_pos = len(buffer)
-            if n_pos == -1:
-                n_pos = len(buffer)
+            if r_pos == -1: r_pos = len(buffer)
+            if n_pos == -1: n_pos = len(buffer)
             pos = min(r_pos, n_pos)
-
             line_bytes = buffer[:pos]
-            # Handle \r\n as single delimiter
             if pos < len(buffer) - 1 and buffer[pos:pos + 2] == b'\r\n':
                 buffer = buffer[pos + 2:]
             else:
                 buffer = buffer[pos + 1:]
-
             dec = line_bytes.decode("utf-8", errors="ignore").strip()
-            if not dec:
-                continue
+            if dec:
+                all_lines.append(dec)
 
-            all_lines.append(dec)
-
-            # Debug: log ALL lines to diagnose progress format
-            print(f"[7z-extract] line {len(all_lines)}: {dec[:200]}", flush=True)
-
-            # Parse 7z output — try patterns in order
-            # Pattern 1: "45% 2 - filename.mkv" or "45% - filename.mkv"
-            m = re.search(r'(\d+)%\s*\d*\s*-\s*(.+)', dec)
-            if m:
-                pct = float(m.group(1))
-                current_file = m.group(2).strip()
-                progress_count += 1
-                if progress_count <= 3 or progress_count % 20 == 0:
-                    print(f"[7z-extract] PROGRESS: {pct:.0f}% - {current_file[:60]}", flush=True)
-                extract_tasks[eid]["percent"] = pct
-                extract_tasks[eid]["current_file"] = current_file
-                _calc_eta(extract_tasks[eid])
-                eta = extract_tasks[eid].get("eta", "")
-                spd = extract_tasks[eid].get("speed", "")
-                parts = [f"{pct:.0f}%"]
-                if spd:
-                    parts.append(spd)
-                if eta:
-                    parts.append(f"ETA {eta}")
-                extract_tasks[eid]["progress"] = " · ".join(parts)
-                continue
-
-            # Pattern 2: "45%" (percent only)
-            m2 = re.search(r'(\d+)%', dec)
-            if m2:
-                pct = float(m2.group(1))
-                extract_tasks[eid]["percent"] = pct
-                _calc_eta(extract_tasks[eid])
-                eta = extract_tasks[eid].get("eta", "")
-                spd = extract_tasks[eid].get("speed", "")
-                parts = [f"{pct:.0f}%"]
-                if spd:
-                    parts.append(spd)
-                if eta:
-                    parts.append(f"ETA {eta}")
-                extract_tasks[eid]["progress"] = " · ".join(parts)
-                continue
-
-            # Pattern 3: "Everything is Ok" → done
-            if "everything is ok" in dec.lower():
-                extract_tasks[eid]["percent"] = 100
-                continue
-
-        # Check cancel between chunks
         if extract_tasks.get(eid, {}).get("status") == "cancelled":
             proc.kill()
             break
 
     await proc.wait()
+    monitor_task.cancel()
+    try:
+        await monitor_task
+    except asyncio.CancelledError:
+        pass
     _extract_procs.pop(eid, None)
 
-    print(f"[7z-extract] DONE: exit={proc.returncode}, "
-          f"lines={len(all_lines)}, progress_updates={progress_count}", flush=True)
+    print(f"[7z-extract] DONE: exit={proc.returncode}, lines={len(all_lines)}", flush=True)
 
     if extract_tasks.get(eid, {}).get("status") == "cancelled":
         return False
@@ -706,7 +706,6 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         })
         return True
     else:
-        # Check for known error patterns
         err_msg = "Extraction failed"
         for line in reversed(all_lines):
             if not line:
