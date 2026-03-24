@@ -413,7 +413,7 @@ async def api_subtitle_file(filepath: str, _=Depends(verify_key)):
 
 
 @router.get("/api/media/subtitle-file-cached/{cache_hash}/{filename}")
-async def api_cached_subtitle(cache_hash: str, filename: str, _=Depends(verify_key)):
+async def api_cached_subtitle(cache_hash: str, filename: str):
     """Serve cached extracted subtitle (embedded tracks)."""
     from config import THUMBNAILS_DIR
     from fastapi.responses import FileResponse
