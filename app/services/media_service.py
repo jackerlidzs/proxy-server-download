@@ -23,6 +23,7 @@ from config import (
 transcode_semaphore: asyncio.Semaphore = None
 _active_transcodes: dict = {}
 _generating_thumbnails: set = set()  # Dedup guard for concurrent sprite generation
+_transcode_errors: dict = {}  # Error messages after FFmpeg fails (cleared after frontend reads)
 
 # Video codecs that can be COPIED directly into HLS (H.264 only truly safe)
 COPY_VIDEO_CODECS = {'h264', 'avc', 'avc1'}
@@ -226,7 +227,15 @@ async def get_media_info(filepath: Path) -> dict:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return {}
         if proc.returncode != 0:
             return {}
 
@@ -479,6 +488,10 @@ def get_hls_status(filepath: Path) -> dict:
             }
         }
 
+    # Check if a recent error occurred (cleared after first read)
+    if vid_hash in _transcode_errors:
+        return {"status": "error", "message": _transcode_errors.pop(vid_hash)}
+
     return {"status": "not_started"}
 
 
@@ -580,6 +593,7 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
                 await proc.wait()
                 if proc.returncode != 0:
                     _active_transcodes.pop(vid_hash, None)
+                    _transcode_errors[vid_hash] = "FFmpeg failed"
                     import shutil as _shutil
                     if hls_dir.exists(): _shutil.rmtree(hls_dir, ignore_errors=True)
                     return
@@ -621,6 +635,7 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
                     await proc.wait()
                     if proc.returncode != 0:
                         _active_transcodes.pop(vid_hash, None)
+                        _transcode_errors[vid_hash] = "FFmpeg failed (profile: " + pname + ")"
                         import shutil as _shutil
                         if hls_dir.exists(): _shutil.rmtree(hls_dir, ignore_errors=True)
                         return
@@ -632,6 +647,7 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
 
         except Exception as e:
             _active_transcodes.pop(vid_hash, None)
+            _transcode_errors[vid_hash] = str(e)
             import shutil as _shutil
             if hls_dir.exists(): _shutil.rmtree(hls_dir, ignore_errors=True)
 

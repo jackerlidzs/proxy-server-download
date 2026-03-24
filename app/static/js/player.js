@@ -82,7 +82,7 @@
         if (isStale()) return;
 
         // Hiện nút convert HLS để user tự quyết định
-        showHlsConvertButton(filePath);
+        showHlsConvertButton(filePath, myGen);
       }
     },
 
@@ -449,13 +449,16 @@
 
   // ─── HLS CONVERT BUTTON ─────────────────────────────────
 
-  function showHlsConvertButton(filePath) {
+  function showHlsConvertButton(filePath, genId) {
     // Xóa bar cũ nếu còn
     var oldBar = document.getElementById('hls-convert-bar');
     if (oldBar) oldBar.remove();
 
     var playerW = document.getElementById('playerW');
     if (!playerW) return;
+
+    // Guard helper: check cả generation lẫn plyrInstance
+    function isStaleConvert() { return _openGeneration !== genId || !plyrInstance; }
 
     // Tạo bar
     var bar = document.createElement('div');
@@ -489,8 +492,8 @@
       showStatusOverlay('⏳ Đang kích hoạt convert...');
 
       var triggered = await triggerHlsConvert(filePath);
-      // Guard: user đã close player trong lúc chờ
-      if (!plyrInstance) { bar.remove(); return; }
+      // Guard: user đã close player hoặc mở video khác
+      if (isStaleConvert()) { bar.remove(); return; }
       if (!triggered) {
         hideStatusOverlay();
         label.textContent = '❌ Server không thể convert lúc này';
@@ -503,12 +506,12 @@
 
       try {
         var readyData = await waitUntilReady(filePath);
-        // Guard: user đã close player trong lúc chờ
-        if (!plyrInstance) { bar.remove(); return; }
+        // Guard: user đã close player hoặc mở video khác
+        if (isStaleConvert()) { bar.remove(); return; }
         hideStatusOverlay();
 
         if (readyData && readyData.fallback) {
-          label.textContent = '❌ Convert thất bại';
+          label.textContent = '❌ Convert thất bại — thử lại?';
           btnConvert.textContent = 'Thử lại';
           btnConvert.disabled = false;
           btnConvert.style.opacity = '1';
@@ -671,8 +674,9 @@
         if (data.status === 'error') {
           clearInterval(interval);
           window._hlsPollingInterval = null;
-          showStatusOverlay('\u274c Convert thất bại. Thử stream trực tiếp...');
-          setTimeout(function() { resolve({ fallback: true }); }, 2000);
+          var errMsg = data.message || 'FFmpeg error';
+          showStatusOverlay('\u274c Convert thất bại: ' + errMsg);
+          setTimeout(function() { resolve({ fallback: true }); }, 3000);
         }
 
         if (data.status === 'ready') {
