@@ -29,10 +29,13 @@
         nowP.textContent = '🎬 ' + (fileName || filePath);
       }
 
-      // Fetch subtitles + HLS status in parallel
+      // Fetch subtitles + HLS status + probe in parallel
       var subsPromise = fetchSubtitles(filePath);
-      var statusData = await fetchHlsStatus(filePath);
+      var statusPromise = fetchHlsStatus(filePath);
+      var probePromise = probeStreamUrl(filePath, fallbackStreamUrl);
+      var statusData = await statusPromise;
       var subs = await subsPromise;
+      var directUrl = await probePromise;
 
       // Inject <track> elements before Plyr init
       injectSubtitleTracks(subs);
@@ -49,7 +52,6 @@
 
       } else if (statusData.status === 'transcoding') {
         // Đang convert → chờ với timeout, fallback nếu quá lâu
-        var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
         showStatusOverlay('\u23f3 Đang xử lý video...');
         try {
           var readyData = await waitUntilReady(filePath);
@@ -66,7 +68,6 @@
 
       } else {
         // not_started / error / unknown → play NGAY qua direct stream
-        var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
         await loadPlayerDirect(filePath, directUrl, subs);
 
         // Hiện nút convert HLS để user tự quyết định
@@ -115,10 +116,7 @@
       'pip',
       'fullscreen'
     ];
-    var settings = ['speed', 'quality'];
-    if (subs && subs.length > 0) {
-      settings.push('captions');
-    }
+    var settings = ['speed', 'quality', 'captions'];
 
     var plyrConfig = {
       controls: controls,
@@ -145,17 +143,19 @@
     console.log('[thumbnail] init src:', thumbSrc);
     plyrConfig.previewThumbnails = { enabled: false };
 
-    // Captions config if subs available
-    if (subs && subs.length > 0) {
-      plyrConfig.captions = { active: false, language: 'auto', update: true };
-    }
+    // Captions config — always include so Plyr renders the menu
+    plyrConfig.captions = {
+      active: !!(subs && subs.length > 0 && window._defaultSubLang),
+      language: window._defaultSubLang || 'auto',
+      update: true
+    };
 
     plyrInstance = new Plyr('#player', plyrConfig);
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
       // Enable thumbnails INSIDE ready — player.elements.progress exists here
-      if (thumbSrc) {
+      if (thumbSrc && plyrInstance) {
         plyrInstance.setPreviewThumbnails({ enabled: true, src: thumbSrc });
       }
 
@@ -205,10 +205,7 @@
       'pip',
       'fullscreen'
     ];
-    var settings = ['speed'];
-    if (subs && subs.length > 0) {
-      settings.push('captions');
-    }
+    var settings = ['speed', 'captions'];
 
     var plyrConfig = {
       controls: controls,
@@ -229,17 +226,19 @@
     console.log('[thumbnail] init src:', thumbSrc);
     plyrConfig.previewThumbnails = { enabled: false };
 
-    // Captions config if subs available
-    if (subs && subs.length > 0) {
-      plyrConfig.captions = { active: false, language: 'auto', update: true };
-    }
+    // Captions config — always include so Plyr renders the menu
+    plyrConfig.captions = {
+      active: !!(subs && subs.length > 0 && window._defaultSubLang),
+      language: window._defaultSubLang || 'auto',
+      update: true
+    };
 
     plyrInstance = new Plyr('#player', plyrConfig);
     window._player = plyrInstance;
 
     plyrInstance.on('ready', function() {
       // Enable thumbnails INSIDE ready — player.elements.progress exists here
-      if (thumbSrc) {
+      if (thumbSrc && plyrInstance) {
         plyrInstance.setPreviewThumbnails({ enabled: true, src: thumbSrc });
       }
 
@@ -549,6 +548,26 @@
     playerW.appendChild(bar);
   }
 
+  // ─── PROBE HELPER ──────────────────────────────────────────
+
+  async function probeStreamUrl(filePath, fallbackStreamUrl) {
+    if (fallbackStreamUrl) return fallbackStreamUrl;
+    try {
+      var res = await fetch('/api/media/probe/' + encodeFilePath(filePath), {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        var data = await res.json();
+        if (data.browser_compatible === true) {
+          return '/stream/' + encodeFilePath(filePath);
+        }
+      }
+    } catch(e) {
+      console.warn('[probe] failed, fallback to transcode:', e);
+    }
+    return '/stream-transcode/' + encodeFilePath(filePath);
+  }
+
   // ─── HLS API CALLS ───────────────────────────────────────
   function getAuthHeaders() {
     var key = localStorage.getItem('dp_key') || '';
@@ -677,6 +696,12 @@
 
           try {
             var res2 = await fetch(url, { redirect: 'follow', cache: 'no-store' });
+            // Guard: player có thể bị destroy trong lúc fetch
+            if (!plyrInstance) {
+              clearInterval(retryInterval);
+              window._thumbnailRetryInterval = null;
+              return;
+            }
             if (res2.ok && res2.status !== 202) {
               // Guard: player must be ready (elements.progress exists)
               if (!plyrInstance.ready) return;
@@ -735,9 +760,15 @@
       var subs = await res.json();
       // Validate: only keep entries with a valid src
       if (!Array.isArray(subs)) return [];
-      return subs.filter(function(s) {
+      var valid = subs.filter(function(s) {
         return s && s.src && s.label;
       });
+      // Filter: chỉ giữ en/eng/vi/vie — fallback tất cả nếu không match
+      var preferredLangs = ['en', 'eng', 'vi', 'vie'];
+      var filtered = valid.filter(function(s) {
+        return s.language && preferredLangs.indexOf(s.language.toLowerCase()) !== -1;
+      });
+      return filtered.length > 0 ? filtered : valid;
     } catch(e) { return []; }
   }
 
@@ -745,11 +776,22 @@
     var videoEl = document.getElementById('player');
     if (!videoEl || !subs || subs.length === 0) return;
 
-    subs.forEach(function(sub) {
+    // Track unique srclang — Plyr cần mỗi track srclang khác nhau để switch đúng
+    var langCount = {};
+    subs.forEach(function(sub, idx) {
+      var lang = sub.language || 'und';
+      if (langCount[lang] === undefined) {
+        langCount[lang] = 0;
+      } else {
+        langCount[lang]++;
+      }
+      // Nếu trùng lang → thêm suffix (_1, _2...)
+      var uniqueLang = langCount[lang] > 0 ? lang + '_' + langCount[lang] : lang;
+
       var track = document.createElement('track');
       track.kind    = 'subtitles';
       track.label   = sub.label;
-      track.srclang = sub.language || 'und';
+      track.srclang = uniqueLang;
       track.src     = sub.src;
       videoEl.appendChild(track);
     });

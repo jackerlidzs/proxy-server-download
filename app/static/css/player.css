@@ -174,3 +174,9 @@
 @media (max-width: 480px) {
   .plyr__volume         { display: none; }
 }
+
+/* Subtitle/captions menu — scroll nếu quá nhiều track */
+.plyr__menu__container [role="menu"] {
+  max-height: 260px;
+  overflow-y: auto;
+}
