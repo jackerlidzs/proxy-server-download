@@ -613,6 +613,9 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
         last_milestone = -1  # Track 10% milestones for log_lines
         while extract_tasks.get(eid, {}).get("status") == "extracting":
             await asyncio.sleep(1.5)
+            # FIX 1: out_dir may not exist yet (7z creates it)
+            if not out_dir.exists():
+                continue
             try:
                 current_size = sum(
                     f.stat().st_size
@@ -662,6 +665,10 @@ async def _extract_7z(fp: Path, out_dir: Path, eid: str, password: str = None) -
                     log = extract_tasks[eid].get("log_lines", [])
                     log.append(f"[7z] {milestone * 10}% — {human_size(current_size)} / {human_size(total_size)}")
                     print(f"[7z-extract] MONITOR: {pct:.0f}% ({human_size(current_size)}/{human_size(total_size)})", flush=True)
+
+        # FIX 2: set final 100% when loop exits on completion
+        if extract_tasks.get(eid, {}).get("status") == "completed":
+            extract_tasks[eid]["percent"] = 100
 
     # Start progress monitor in parallel
     monitor_task = asyncio.create_task(_monitor_progress())
