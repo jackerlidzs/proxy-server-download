@@ -292,9 +292,11 @@
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
     if (hlsInstance)  { hlsInstance.destroy();  hlsInstance = null; }
     window._player = null;
-    // Remove HLS convert bar nếu còn
+    // Remove HLS convert/ready bar nếu còn
     var hlsBar = document.getElementById('hls-convert-bar');
     if (hlsBar) hlsBar.remove();
+    var readyBar = document.getElementById('hls-ready-bar');
+    if (readyBar) readyBar.remove();
     var videoEl = document.getElementById('player');
     if (videoEl) {
       // Remove subtitle tracks from previous session

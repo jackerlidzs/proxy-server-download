@@ -580,6 +580,8 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
                 await proc.wait()
                 if proc.returncode != 0:
                     _active_transcodes.pop(vid_hash, None)
+                    import shutil as _shutil
+                    if hls_dir.exists(): _shutil.rmtree(hls_dir, ignore_errors=True)
                     return
 
                 # Generate simple master playlist pointing to index.m3u8
@@ -619,6 +621,8 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
                     await proc.wait()
                     if proc.returncode != 0:
                         _active_transcodes.pop(vid_hash, None)
+                        import shutil as _shutil
+                        if hls_dir.exists(): _shutil.rmtree(hls_dir, ignore_errors=True)
                         return
 
                 # Generate multi-profile master playlist
@@ -628,6 +632,8 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
 
         except Exception as e:
             _active_transcodes.pop(vid_hash, None)
+            import shutil as _shutil
+            if hls_dir.exists(): _shutil.rmtree(hls_dir, ignore_errors=True)
 
 
 def _generate_single_master(hls_dir: Path):

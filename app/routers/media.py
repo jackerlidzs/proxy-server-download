@@ -259,22 +259,25 @@ async def stream_transcode(filename: str, request: Request, ss: float = 0):
         "-y", "pipe:1"
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
+    try:
+        proc = await asyncio.wait_for(
+            asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            ),
+            timeout=10
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "FFmpeg startup timeout")
 
     async def generate():
         try:
             while True:
-                # Timeout: nếu ffmpeg không output gì trong 30s → kill
-                chunk = await asyncio.wait_for(proc.stdout.read(262144), timeout=30)
+                chunk = await proc.stdout.read(262144)
                 if not chunk:
                     break
                 yield chunk
-        except asyncio.TimeoutError:
-            pass
         except Exception:
             pass
         finally:
@@ -344,6 +347,18 @@ async def api_thumbnails(filepath: str):
     if info['status'] == 'ready':
         # Redirect to static VTT so Plyr resolves relative sprite.jpg correctly
         return RedirectResponse(url=info['vtt_url'], status_code=302)
+
+    # Dedup guard: skip if already generating for this file
+    from services.media_service import _generating_thumbnails
+    vid_hash = info.get('hash', '')
+    if not vid_hash:
+        from services.media_service import get_thumbnail_cache_dir
+        vid_hash = get_thumbnail_cache_dir(fp).name
+    if vid_hash in _generating_thumbnails:
+        return JSONResponse(
+            status_code=202,
+            content={'status': 'generating', 'message': 'Already generating'}
+        )
 
     # Not generated yet → trigger in background
     asyncio.create_task(generate_sprite_thumbnails(fp))
