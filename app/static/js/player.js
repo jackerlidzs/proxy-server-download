@@ -69,22 +69,8 @@
         var directUrl = fallbackStreamUrl || ('/stream-transcode/' + encodeFilePath(filePath));
         await loadPlayerDirect(filePath, directUrl, subs);
 
-        // Auto-convert in background — does not block playback
-        triggerHlsConvert(filePath).then(triggered => {
-          if (!triggered) return;
-          waitUntilReady(filePath)
-            .then(() => {
-              // Show subtle toast — do NOT auto-switch stream
-              const overlay = document.getElementById('player-status-overlay');
-              const text    = document.getElementById('player-status-text');
-              if (overlay && text && plyrInstance) {
-                text.textContent = '✅ HLS sẵn sàng — mở lại để xem mượt hơn';
-                overlay.classList.remove('hidden');
-                setTimeout(() => overlay.classList.add('hidden'), 4000);
-              }
-            })
-            .catch(() => {});
-        });
+        // Hiện nút convert HLS để user tự quyết định
+        showHlsConvertButton(filePath);
       }
     },
 
@@ -443,6 +429,124 @@
     setTimeout(function() {
       if (flash.parentNode) flash.remove();
     }, 700);
+  }
+
+  // ─── HLS CONVERT BUTTON ─────────────────────────────────
+
+  function showHlsConvertButton(filePath) {
+    // Xóa bar cũ nếu còn
+    var oldBar = document.getElementById('hls-convert-bar');
+    if (oldBar) oldBar.remove();
+
+    var playerW = document.getElementById('playerW');
+    if (!playerW) return;
+
+    // Tạo bar
+    var bar = document.createElement('div');
+    bar.id = 'hls-convert-bar';
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 12px;'
+      + 'background:rgba(0,0,0,0.85);color:#fff;font-size:13px;border-radius:0 0 8px 8px;';
+
+    var label = document.createElement('span');
+    label.textContent = '⚡ Convert HLS để xem mượt hơn';
+    label.style.flex = '1';
+
+    var btnConvert = document.createElement('button');
+    btnConvert.textContent = 'Convert';
+    btnConvert.style.cssText = 'padding:4px 12px;border:none;border-radius:4px;'
+      + 'background:#4f9; color:#000;font-weight:600;cursor:pointer;font-size:13px;';
+
+    var btnClose = document.createElement('button');
+    btnClose.textContent = '✕';
+    btnClose.style.cssText = 'padding:4px 8px;border:none;background:transparent;'
+      + 'color:#aaa;cursor:pointer;font-size:15px;';
+    btnClose.onclick = function() { bar.remove(); };
+
+    btnConvert.onclick = async function() {
+      // Disable nút, hiện progress overlay
+      btnConvert.disabled = true;
+      btnConvert.textContent = 'Đang convert...';
+      btnConvert.style.opacity = '0.6';
+      btnClose.style.display = 'none';
+      label.textContent = '⏳ Đang xử lý...';
+
+      showStatusOverlay('⏳ Đang kích hoạt convert...');
+
+      var triggered = await triggerHlsConvert(filePath);
+      // Guard: user đã close player trong lúc chờ
+      if (!plyrInstance) { bar.remove(); return; }
+      if (!triggered) {
+        hideStatusOverlay();
+        label.textContent = '❌ Server không thể convert lúc này';
+        btnConvert.textContent = 'Thử lại';
+        btnConvert.disabled = false;
+        btnConvert.style.opacity = '1';
+        btnClose.style.display = '';
+        return;
+      }
+
+      try {
+        var readyData = await waitUntilReady(filePath);
+        // Guard: user đã close player trong lúc chờ
+        if (!plyrInstance) { bar.remove(); return; }
+        hideStatusOverlay();
+
+        if (readyData && readyData.fallback) {
+          label.textContent = '❌ Convert thất bại';
+          btnConvert.textContent = 'Thử lại';
+          btnConvert.disabled = false;
+          btnConvert.style.opacity = '1';
+          btnClose.style.display = '';
+          return;
+        }
+
+        // Convert xong → hiện nút chuyển sang HLS
+        var masterUrl = readyData.master_url;
+        label.textContent = '✅ HLS sẵn sàng!';
+        btnConvert.textContent = 'Chuyển sang HLS';
+        btnConvert.disabled = false;
+        btnConvert.style.opacity = '1';
+        btnConvert.style.background = '#4fc3f7';
+        btnClose.style.display = '';
+
+        btnConvert.onclick = function() {
+          // Lưu vị trí hiện tại
+          var savedTime = 0;
+          if (plyrInstance && plyrInstance.currentTime) {
+            savedTime = plyrInstance.currentTime;
+          }
+
+          // Destroy rồi load lại bằng HLS
+          destroyPlayer();
+          bar.remove();
+
+          fetchSubtitles(filePath).then(function(subs) {
+            injectSubtitleTracks(subs);
+            loadPlayer(filePath, masterUrl, subs).then(function() {
+              // Resume đúng vị trí sau khi player ready
+              if (savedTime > 0 && plyrInstance) {
+                plyrInstance.once('canplay', function() {
+                  plyrInstance.currentTime = savedTime;
+                });
+              }
+            });
+          });
+        };
+
+      } catch(err) {
+        hideStatusOverlay();
+        label.textContent = '❌ Convert thất bại';
+        btnConvert.textContent = 'Thử lại';
+        btnConvert.disabled = false;
+        btnConvert.style.opacity = '1';
+        btnClose.style.display = '';
+      }
+    };
+
+    bar.appendChild(label);
+    bar.appendChild(btnConvert);
+    bar.appendChild(btnClose);
+    playerW.appendChild(bar);
   }
 
   // ─── HLS API CALLS ───────────────────────────────────────

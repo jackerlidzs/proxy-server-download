@@ -26,9 +26,9 @@ curl -X POST http://YOUR_SERVER:8080/api/download \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://mblservices.org/amember/downloader/.../file.rar",
+    "url": "https://example.org/down/downloader/.../file.rar",
     "headers": {
-      "referer": "https://dl.mobilism.org/",
+      "referer": "https://dl.example.org/",
       "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     }
@@ -42,7 +42,7 @@ curl -X POST http://YOUR_SERVER:8080/api/download \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "curl_command": "curl '\''https://mblservices.org/.../file.rar'\'' -H '\''referer: https://dl.mobilism.org/'\'' -H '\''user-agent: Mozilla/5.0...'\''",
+    "curl_command": "curl '\''https://example.org/.../file.rar'\'' -H '\''referer: https://dl.example.org/'\'' -H '\''user-agent: Mozilla/5.0...'\''",
     "filename": "my_file.rar"
   }'
 ```
