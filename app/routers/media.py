@@ -268,10 +268,13 @@ async def stream_transcode(filename: str, request: Request, ss: float = 0):
     async def generate():
         try:
             while True:
-                chunk = await proc.stdout.read(262144)
+                # Timeout: nếu ffmpeg không output gì trong 30s → kill
+                chunk = await asyncio.wait_for(proc.stdout.read(262144), timeout=30)
                 if not chunk:
                     break
                 yield chunk
+        except asyncio.TimeoutError:
+            pass
         except Exception:
             pass
         finally:

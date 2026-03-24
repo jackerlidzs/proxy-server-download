@@ -19,7 +19,7 @@ from config import DOWNLOAD_DIR, TRASH_DIR, VERSIONS_DIR, HLS_DIR, CLEANUP_HOURS
 from database import get_db, close_db
 from services.download_service import init_semaphore
 from services.extract_service import init_extract_semaphore
-from services.media_service import init_transcode_semaphore
+from services.media_service import init_transcode_semaphore, cleanup_old_hls
 from services.file_service import auto_purge_expired
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -61,6 +61,8 @@ async def cleanup_loop():
                      and datetime.fromisoformat(v["created_at"]) < cut]
             for k in stale:
                 downloads.pop(k, None)
+            # LRU cleanup for HLS cache (if over limit)
+            cleanup_old_hls()
         except Exception:
             pass
         await asyncio.sleep(3600)

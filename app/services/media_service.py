@@ -22,6 +22,7 @@ from config import (
 
 transcode_semaphore: asyncio.Semaphore = None
 _active_transcodes: dict = {}
+_generating_thumbnails: set = set()  # Dedup guard for concurrent sprite generation
 
 # Video codecs that can be COPIED directly into HLS (H.264 only truly safe)
 COPY_VIDEO_CODECS = {'h264', 'avc', 'avc1'}
@@ -225,7 +226,7 @@ async def get_media_info(filepath: Path) -> dict:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        out, _ = await proc.communicate()
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
         if proc.returncode != 0:
             return {}
 
@@ -578,7 +579,7 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
 
                 await proc.wait()
                 if proc.returncode != 0:
-                    _active_transcodes[vid_hash] = {"percent": -1, "error": "FFmpeg failed", "strategy": strategy}
+                    _active_transcodes.pop(vid_hash, None)
                     return
 
                 # Generate simple master playlist pointing to index.m3u8
@@ -617,7 +618,7 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
 
                     await proc.wait()
                     if proc.returncode != 0:
-                        _active_transcodes[vid_hash] = {"percent": -1, "profile": pname, "error": "FFmpeg failed", "strategy": strategy}
+                        _active_transcodes.pop(vid_hash, None)
                         return
 
                 # Generate multi-profile master playlist
@@ -626,7 +627,7 @@ async def _do_hls_transcode(filepath: Path, hls_dir: Path, profiles: list,
             _active_transcodes.pop(vid_hash, None)
 
         except Exception as e:
-            _active_transcodes[vid_hash] = {"percent": -1, "error": str(e), "strategy": strategy_info.get('strategy', '')}
+            _active_transcodes.pop(vid_hash, None)
 
 
 def _generate_single_master(hls_dir: Path):
@@ -662,6 +663,47 @@ async def cleanup_hls(filepath: Path):
     hls_dir = get_hls_dir(filepath)
     if hls_dir.exists():
         shutil.rmtree(hls_dir)
+
+
+HLS_MAX_CACHE_GB = float(os.getenv("HLS_MAX_CACHE_GB", "20"))
+
+
+def cleanup_old_hls():
+    """LRU cleanup: remove oldest HLS caches when total size exceeds limit."""
+    import shutil
+    if not HLS_DIR.exists():
+        return
+
+    # Collect all HLS dirs with their total size and last modified time
+    entries = []
+    for d in HLS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+        mtime = max((f.stat().st_mtime for f in d.rglob("*") if f.is_file()), default=0)
+        entries.append({"dir": d, "size": total, "mtime": mtime})
+
+    total_bytes = sum(e["size"] for e in entries)
+    limit_bytes = HLS_MAX_CACHE_GB * 1024**3
+
+    if total_bytes <= limit_bytes:
+        return
+
+    # Sort oldest first, remove until under limit
+    entries.sort(key=lambda e: e["mtime"])
+    removed = 0
+    for e in entries:
+        if total_bytes <= limit_bytes:
+            break
+        # Skip currently transcoding dirs
+        vid_hash = e["dir"].name
+        if vid_hash in _active_transcodes:
+            continue
+        shutil.rmtree(e["dir"], ignore_errors=True)
+        total_bytes -= e["size"]
+        removed += 1
+
+    return removed
 
 
 # ===== Remux to MP4 Faststart =====
@@ -894,6 +936,20 @@ async def generate_sprite_thumbnails(filepath: Path):
     if sprite_jpg.exists() and vtt_file.exists():
         return str(vtt_file)
 
+    # Dedup: skip if already generating for this file
+    cache_key = str(cache_dir)
+    if cache_key in _generating_thumbnails:
+        return None
+    _generating_thumbnails.add(cache_key)
+
+    try:
+        return await _do_generate_sprite(filepath, cache_dir, sprite_jpg, vtt_file)
+    finally:
+        _generating_thumbnails.discard(cache_key)
+
+
+async def _do_generate_sprite(filepath: Path, cache_dir: Path, sprite_jpg: Path, vtt_file: Path):
+    """Internal: actually generate sprite sheet + VTT."""
     # Probe duration
     duration = await quick_probe_duration(filepath)
     if duration <= 0:

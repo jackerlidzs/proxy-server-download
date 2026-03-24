@@ -7,6 +7,7 @@
   let plyrInstance  = null;
   let hlsInstance   = null;
   let currentPath   = null;
+  let _openGeneration = 0;  // Race guard: tăng mỗi lần open(), check sau mỗi await
 
   // ─── PUBLIC API ──────────────────────────────────────────
   // app.js gọi hàm này thay cho VP.play() cũ
@@ -17,6 +18,10 @@
     open: async function(filePath, fileName, fallbackStreamUrl) {
       currentPath = filePath;
       destroyPlayer();
+
+      // Race guard: nếu open() mới được gọi thì open() cũ sẽ tự abort
+      var myGen = ++_openGeneration;
+      function isStale() { return _openGeneration !== myGen; }
 
       // Show player container
       var pw = document.getElementById('playerW');
@@ -34,8 +39,11 @@
       var statusPromise = fetchHlsStatus(filePath);
       var probePromise = probeStreamUrl(filePath, fallbackStreamUrl);
       var statusData = await statusPromise;
+      if (isStale()) return;
       var subs = await subsPromise;
+      if (isStale()) return;
       var directUrl = await probePromise;
+      if (isStale()) return;
 
       // Inject <track> elements before Plyr init
       injectSubtitleTracks(subs);
@@ -55,6 +63,7 @@
         showStatusOverlay('\u23f3 Đang xử lý video...');
         try {
           var readyData = await waitUntilReady(filePath);
+          if (isStale()) return;
           hideStatusOverlay();
           if (readyData && readyData.fallback) {
             await loadPlayerDirect(filePath, directUrl, subs);
@@ -62,6 +71,7 @@
             loadPlayer(filePath, readyData.master_url, subs);
           }
         } catch(err) {
+          if (isStale()) return;
           hideStatusOverlay();
           await loadPlayerDirect(filePath, directUrl, subs);
         }
@@ -69,6 +79,7 @@
       } else {
         // not_started / error / unknown → play NGAY qua direct stream
         await loadPlayerDirect(filePath, directUrl, subs);
+        if (isStale()) return;
 
         // Hiện nút convert HLS để user tự quyết định
         showHlsConvertButton(filePath);
@@ -280,6 +291,10 @@
     }
     if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
     if (hlsInstance)  { hlsInstance.destroy();  hlsInstance = null; }
+    window._player = null;
+    // Remove HLS convert bar nếu còn
+    var hlsBar = document.getElementById('hls-convert-bar');
+    if (hlsBar) hlsBar.remove();
     var videoEl = document.getElementById('player');
     if (videoEl) {
       // Remove subtitle tracks from previous session
